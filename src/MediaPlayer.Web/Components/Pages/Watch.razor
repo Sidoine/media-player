@@ -1,0 +1,530 @@
+@page "/lecture/{MediaType}/{TmdbId:int}"
+@page "/lecture/fichier/{LibraryPath}"
+@layout Layout.PlaybackLayout
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject WatchProgressStore ProgressStore
+
+<PageTitle>@(MediaTitle ?? Download?.Title ?? "Lecture") · Écran</PageTitle>
+
+<div class="watch-page">
+    @if (IsLoading)
+    {
+        <section class="watch-status"><span class="spinner"></span><span>@StatusMessage</span></section>
+    }
+    else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+    {
+        <section class="watch-status">
+            <strong>@ErrorMessage</strong>
+            <p>@(MediaTitle ?? Download?.Title)</p>
+                @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message error">@DownloadMessage</div> }
+            @if (IsNoSourceFound && Media is not null)
+            {
+                <p>Surveillez ce média : les indexeurs seront vérifiés automatiquement.</p>
+                @if (IsOnWatchlist) { <small>Ajouté à la liste « À surveiller ».</small> }
+                else { <button class="button button-light" disabled="@IsAddingToWatchlist" @onclick="AddToWatchlistAsync">@(IsAddingToWatchlist ? "Ajout…" : "＋ À surveiller")</button> }
+            }
+            <div class="watch-status-actions"><a class="button button-light" href="@MediaInfoUrl">← Retour à la fiche</a><a class="button button-glass" href="/bibliotheque">Ma bibliothèque</a></div>
+        </section>
+    }
+    else if (Choices.Count > 0 && Download is null)
+    {
+        <a class="watch-back" href="@MediaInfoUrl" aria-label="Retour à la fiche" title="Retour à la fiche">←</a>
+        <section class="watch-source-picker">
+            <div class="eyebrow">@(MediaType == "tv" ? "SÉRIE" : "FILM") · SÉLECTION DE SOURCE</div>
+            <h1>Choisir une source</h1>
+            <p class="watch-source-intro">@MediaTitle · Les sources VO en 1080p sont privilégiées automatiquement lorsqu’elles sont disponibles.</p>
+            <div class="download-choices">
+                @foreach (var choice in Choices)
+                {
+                    <button class="download-choice" @key="choice.Link" disabled="@IsStartingDownload" @onclick="() => StartDownloadAsync(choice)">
+                        <span class="choice-title">@choice.Title</span>
+                        <span class="choice-meta">@choice.Source · @choice.SizeLabel · @choice.PeerCount pairs</span>
+                        <span class="choice-badges">@if (choice.IsOriginalVersion) { <span>VO</span> } @if (choice.Is1080p) { <span>1080p</span> }</span>
+                    </button>
+                }
+            </div>
+            @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message error">@DownloadMessage</div> }
+        </section>
+    }
+    else if (Download is not null && string.IsNullOrWhiteSpace(StreamUrl))
+    {
+        <a class="watch-back" href="@MediaInfoUrl" aria-label="Retour à la fiche" title="Retour à la fiche">←</a>
+        <section class="watch-status">
+            <span class="spinner"></span>
+            <strong>@Download.Title</strong>
+            <span>@StatusMessage</span>
+            <div class="watch-progress"><span style="width:@($"{BufferProgress:0.##}%")"></span></div>
+            <small>Mise en mémoire tampon : @FormatBytes(Download.BufferedBytes) / @FormatBytes(Download.RequiredBufferBytes)</small>
+            <small>Téléchargement : @Download.Progress.ToString("0.0") % · @Download.AvailablePeers pairs · @FormatRate(Download.DownloadRate)</small>
+            <p>@Download.SourceTitle</p>
+            @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message error">@DownloadMessage</div> }
+            <button class="button button-glass" disabled="@IsCancellingDownload" @onclick="CancelDownloadAsync">
+                @(IsCancellingDownload ? "Annulation…" : "Annuler le téléchargement")
+            </button>
+        </section>
+    }
+    else if (!string.IsNullOrWhiteSpace(StreamUrl))
+    {
+        <a class="watch-back" href="@MediaInfoUrl" aria-label="Retour à la fiche" title="Retour à la fiche">←</a>
+        <video @ref="VideoElement" class="watch-player" controls autoplay playsinline src="@StreamUrl" aria-label="@(MediaTitle ?? Download?.Title ?? "Lecture vidéo")">
+            @if (FrenchSubtitleAvailable)
+            {
+                <track kind="subtitles" srclang="fr" label="Français" src="@SubtitleUrl" default />
+            }
+        </video>
+        @if (!string.IsNullOrWhiteSpace(SubtitleError))
+        {
+            <div class="subtitle-indicator" role="status" aria-live="polite">@SubtitleError</div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string MediaType { get; set; } = "movie";
+    [Parameter] public int TmdbId { get; set; }
+    [Parameter] public string? LibraryPath { get; set; }
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery(Name = "title")]
+    public string? MediaTitle { get; set; }
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery(Name = "position")]
+    public double? ResumePosition { get; set; }
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery(Name = "seasonNumber")]
+    public int? SeasonNumber { get; set; }
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery(Name = "episodeNumber")]
+    public int? EpisodeNumber { get; set; }
+    [Microsoft.AspNetCore.Components.SupplyParameterFromQuery(Name = "episodeTitle")]
+    public string? EpisodeTitle { get; set; }
+
+    private MediaDownloadStatus? Download;
+    private MediaDetails? Media;
+    private List<DownloadChoice> Choices = [];
+    private bool IsLoading = true;
+    private bool IsStartingDownload;
+    private bool IsCancellingDownload;
+    private bool IsNoSourceFound;
+    private bool IsAddingToWatchlist;
+    private bool IsOnWatchlist;
+    private bool NextEpisodeScheduled;
+    private DateTimeOffset NextEpisodeRetryAfter;
+    private bool FrenchSubtitleAvailable;
+    private string StatusMessage = "Connexion au téléchargement…";
+    private string? ErrorMessage;
+    private string? DownloadMessage;
+    private string? StreamUrl;
+    private string? SubtitleError;
+    private string EpisodeQuery => SeasonNumber is not null && EpisodeNumber is not null ? $"&seasonNumber={SeasonNumber}&episodeNumber={EpisodeNumber}" : "";
+    private string SubtitleUrl => $"/api/downloads/{TmdbId}/subtitles/fr?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}";
+    private string DisplayTitle => SeasonNumber is not null && EpisodeNumber is not null
+        ? $"{Media?.Title ?? MediaTitle ?? "Série"} — S{SeasonNumber:00}E{EpisodeNumber:00}{(string.IsNullOrWhiteSpace(EpisodeTitle) ? "" : $" · {EpisodeTitle}")}"
+        : MediaTitle ?? Download?.Title ?? "Lecture";
+    private string MediaInfoUrl => TmdbId > 0
+        ? $"/infos/{Uri.EscapeDataString(Download?.MediaType ?? Media?.MediaType ?? MediaType)}/{TmdbId}"
+        : "/bibliotheque";
+    private CancellationTokenSource? polling;
+    private CancellationTokenSource? subtitleCancellation;
+    private ElementReference VideoElement;
+    private IJSObjectReference? progressModule;
+    private DotNetObjectReference<Watch>? dotNetReference;
+    private bool progressAttached;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        polling?.Cancel();
+        subtitleCancellation?.Cancel();
+        Download = null;
+        Media = null;
+        Choices = [];
+        ErrorMessage = null;
+        DownloadMessage = null;
+        IsNoSourceFound = false;
+        IsOnWatchlist = false;
+        NextEpisodeScheduled = false;
+        NextEpisodeRetryAfter = DateTimeOffset.MinValue;
+        SubtitleError = null;
+        FrenchSubtitleAvailable = false;
+        StreamUrl = null;
+        IsLoading = true;
+
+        if (!string.IsNullOrWhiteSpace(LibraryPath))
+        {
+            StreamUrl = $"/api/library/play/{Uri.EscapeDataString(LibraryPath)}";
+            IsLoading = false;
+            return;
+        }
+
+        if (await LoadDownloadStatusAsync())
+        {
+            if (SeasonNumber is not null && EpisodeNumber is not null)
+            {
+                await LoadPosterAsync();
+                MediaTitle = Media?.Title ?? "Série";
+                if (ResumePosition is null)
+                    ResumePosition = await ProgressStore.GetPositionAsync(TmdbId, "tv", SeasonNumber, EpisodeNumber);
+            }
+            else MediaTitle = Download?.Title;
+            if (Download?.CanStream == true) PreparePlayback();
+            else StartPollingForPlayback();
+        }
+        else if (ErrorMessage is null)
+        {
+            await ResolveSourcesAsync();
+        }
+        IsLoading = false;
+    }
+
+    private async Task<bool> LoadDownloadStatusAsync(CancellationToken ct = default)
+    {
+        try
+        {
+            using var response = await Http.GetAsync($"/api/downloads/{TmdbId}?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}", ct);
+            if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return false;
+            if (!response.IsSuccessStatusCode)
+            {
+                ErrorMessage = "Impossible de vérifier le cache local.";
+                return false;
+            }
+            Download = await response.Content.ReadFromJsonAsync<MediaDownloadStatus>(cancellationToken: ct);
+            return Download is not null;
+        }
+        catch (HttpRequestException) { ErrorMessage = "Impossible de joindre le moteur BitTorrent."; return false; }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { return false; }
+    }
+
+    private async Task ResolveSourcesAsync()
+    {
+        StatusMessage = "Recherche des sources…";
+        try
+        {
+            var mediaResponse = await Http.GetAsync($"/api/catalog/{Uri.EscapeDataString(MediaType)}/{TmdbId}");
+            if (!mediaResponse.IsSuccessStatusCode)
+            {
+                ErrorMessage = "Impossible de récupérer les informations TMDB pour ce média.";
+                return;
+            }
+            Media = await mediaResponse.Content.ReadFromJsonAsync<MediaDetails>();
+            if (Media is null)
+            {
+                ErrorMessage = "TMDB n’a pas fourni les informations nécessaires.";
+                return;
+            }
+            MediaTitle = Media.Title;
+            var titleCandidates = new[] { Media.OriginalTitle, Media.Title }
+                .Where(title => !string.IsNullOrWhiteSpace(title))
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            var searchErrors = new List<string>();
+            foreach (var title in titleCandidates)
+            {
+                var query = SeasonNumber is not null && EpisodeNumber is not null
+                    ? $"{title} S{SeasonNumber:00}E{EpisodeNumber:00} {EpisodeTitle}".Trim()
+                    : Media.Year is null ? title! : $"{title} {Media.Year}";
+                var response = await Http.GetFromJsonAsync<SearchResponse>($"/api/torrent-catalogs/search?query={Uri.EscapeDataString(query)}");
+                if (response?.Errors is { Count: > 0 }) searchErrors.AddRange(response.Errors);
+                Choices = RankCandidates(Media, response?.Results ?? [], SeasonNumber, EpisodeNumber);
+                if (Choices.Count > 0) break;
+            }
+            if (Choices.Count == 0)
+            {
+                IsNoSourceFound = true;
+                ErrorMessage = searchErrors.Count > 0
+                    ? string.Join(" ", searchErrors.Distinct(StringComparer.OrdinalIgnoreCase))
+                    : "Aucune source ne propose de correspondance pour ce titre.";
+                return;
+            }
+
+            var preferred = Choices.Where(choice => choice.IsOriginalVersion && choice.Is1080p)
+                .OrderByDescending(choice => choice.PeerCount)
+                .ThenByDescending(choice => choice.Score)
+                .FirstOrDefault();
+            if (preferred is not null) await StartDownloadAsync(preferred);
+            else if (Choices.Count == 1) await StartDownloadAsync(Choices[0]);
+        }
+        catch (HttpRequestException) { ErrorMessage = "Impossible de joindre les sources de téléchargement."; }
+    }
+
+    private async Task StartDownloadAsync(DownloadChoice choice)
+    {
+        if (Media is null || IsStartingDownload) return;
+        IsStartingDownload = true;
+        DownloadMessage = null;
+        try
+        {
+            var request = new MediaDownloadRequest(TmdbId, DisplayTitle, MediaType, Media.OriginalLanguage, Media.Year,
+                choice.Source, choice.Title, choice.Link, choice.Size, choice.RightsConfirmed, SeasonNumber, EpisodeNumber,
+                Media.RuntimeMinutes);
+            using var response = await Http.PostAsJsonAsync("/api/downloads", request);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                DownloadMessage = error?.Error ?? "Impossible de lancer ce téléchargement.";
+                return;
+            }
+            Download = await response.Content.ReadFromJsonAsync<MediaDownloadStatus>();
+            Choices = [];
+            if (Download is null)
+            {
+                ErrorMessage = "Le téléchargement a démarré, mais son état est indisponible.";
+                return;
+            }
+            MediaTitle = Media.Title;
+            if (Download.CanStream) PreparePlayback();
+            else StartPollingForPlayback();
+        }
+        catch (HttpRequestException) { DownloadMessage = "Le serveur n’a pas pu lancer le téléchargement."; }
+        finally { IsStartingDownload = false; }
+    }
+
+    private async Task CancelDownloadAsync()
+    {
+        if (Download is null || IsCancellingDownload) return;
+        IsCancellingDownload = true;
+        DownloadMessage = null;
+        try
+        {
+            using var response = await Http.DeleteAsync($"/api/downloads/{TmdbId}?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}");
+            if (!response.IsSuccessStatusCode)
+            {
+                DownloadMessage = "Le téléchargement n’a pas pu être annulé.";
+                return;
+            }
+
+            polling?.Cancel();
+            Download = null;
+            ErrorMessage = "Téléchargement annulé.";
+        }
+        catch (HttpRequestException) { DownloadMessage = "Impossible de joindre le serveur pour annuler le téléchargement."; }
+        finally { IsCancellingDownload = false; }
+    }
+
+    private async Task AddToWatchlistAsync()
+    {
+        if (Media is null || IsAddingToWatchlist) return;
+        IsAddingToWatchlist = true;
+        try
+        {
+            var request = new MediaWatchlistRequest(TmdbId, MediaType, Media.Title, Media.OriginalLanguage, Media.Year,
+                SeasonNumber, EpisodeNumber, EpisodeTitle, Media.RuntimeMinutes);
+            using var response = await Http.PostAsJsonAsync("/api/watchlist", request);
+            if (response.IsSuccessStatusCode) IsOnWatchlist = true;
+            else DownloadMessage = "Impossible d’ajouter ce média à la liste de surveillance.";
+        }
+        catch (HttpRequestException) { DownloadMessage = "Impossible de joindre le serveur pour ajouter ce média à la surveillance."; }
+        finally { IsAddingToWatchlist = false; }
+    }
+
+    private List<DownloadChoice> RankCandidates(MediaDetails media, List<TorrentItem> candidates, int? seasonNumber, int? episodeNumber)
+    {
+        var titleVariants = new[] { media.Title, media.OriginalTitle }
+            .Where(title => !string.IsNullOrWhiteSpace(title))
+            .Select(title => Normalize(title!).Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Where(token => token.Length > 2).ToArray())
+            .Where(tokens => tokens.Length > 0)
+            .ToArray();
+        return candidates
+            .Where(result => !string.IsNullOrWhiteSpace(result.Link) && result.RightsConfirmed)
+            .Where(result => MediaType != "tv" || seasonNumber is null
+                || IsCandidateForEpisode(result.Title, seasonNumber.Value, episodeNumber))
+            .Select(result =>
+            {
+                var normalized = Normalize(result.Title);
+                var matched = titleVariants.Select(tokens => tokens.Count(token => normalized.Contains(token, StringComparison.Ordinal)))
+                    .DefaultIfEmpty(0).Max();
+                var bestMatch = titleVariants.FirstOrDefault(tokens => tokens.Count(token => normalized.Contains(token, StringComparison.Ordinal)) == matched);
+                if (matched == 0 || (bestMatch is { Length: > 1 } && matched * 2 < bestMatch.Length)) return null;
+                var is1080 = System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)(?<!\d)1080p?(?!\d)");
+                var hasFrenchDub = System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)\b(FRENCH|TRUEFRENCH|VFF|VFQ|DUBBED)\b");
+                var isOriginal = string.Equals(media.OriginalLanguage, "fr", StringComparison.OrdinalIgnoreCase) ? hasFrenchDub : !hasFrenchDub;
+                var yearMatch = media.Year is not null && result.Title.Contains(media.Year.Value.ToString(), StringComparison.OrdinalIgnoreCase);
+                var resolutionScore = is1080 ? 40 : System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)2160p|4k") ? 15 : -10;
+                var score = (matched * 10) + resolutionScore + (isOriginal ? 25 : -25) + (yearMatch ? 20 : 0);
+                var peers = (int.TryParse(result.Seeders, out var seeders) ? seeders : 0) + (int.TryParse(result.Leechers, out var leechers) ? leechers : 0);
+                return new DownloadChoice(result.Source, result.Title, result.Link, result.Size, peers, result.RightsConfirmed,
+                    isOriginal, is1080, score, FormatSize(result.Size));
+            })
+            .Where(choice => choice is not null)
+            .Select(choice => choice!)
+            .DistinctBy(choice => choice.Link, StringComparer.OrdinalIgnoreCase)
+            .OrderByDescending(choice => choice.Score)
+            .ThenByDescending(choice => choice.PeerCount)
+            .Take(20)
+            .ToList();
+    }
+
+    private static bool IsCandidateForEpisode(string title, int seasonNumber, int? episodeNumber)
+    {
+        var season = seasonNumber.ToString();
+        if (episodeNumber is not null)
+        {
+            var episode = episodeNumber.Value.ToString();
+            var episodePattern = $@"(?i)(?:\bS0*{season}\s*E0*{episode}\b|\b{season}\s*[xX]\s*0*{episode}\b|\b(?:season|saison)\s+0*{season}\s+(?:episode|ep)\s+0*{episode}\b)";
+            if (System.Text.RegularExpressions.Regex.IsMatch(title, episodePattern)) return true;
+        }
+
+        var seasonPattern = $@"(?i)\b(?:S|Season|Saison)\s*0*{season}\b";
+        if (System.Text.RegularExpressions.Regex.IsMatch(title, seasonPattern)) return true;
+
+        // An explicitly labelled complete series or a season range that includes the
+        // requested season is valid even when the release title has no episode tag.
+        if (System.Text.RegularExpressions.Regex.IsMatch(title,
+            @"(?i)\b(?:complete|full|integrale|intégrale)\s+(?:series|show|collection)\b|\ball\s+seasons\b|\btoutes\s+les\s+saisons\b")) return true;
+
+        var range = System.Text.RegularExpressions.Regex.Match(title, @"(?i)\bS0*(\d+)\s*[-–]\s*S?0*(\d+)\b");
+        return range.Success && int.TryParse(range.Groups[1].Value, out var firstSeason)
+            && int.TryParse(range.Groups[2].Value, out var lastSeason)
+            && seasonNumber >= firstSeason && seasonNumber <= lastSeason;
+    }
+
+    private static string Normalize(string value) => System.Text.RegularExpressions.Regex.Replace(value.ToLowerInvariant(), @"[^\p{L}\p{N}]+", " ").Trim();
+    private static string FormatSize(string? size) => long.TryParse(size, out var bytes) && bytes > 0 ? $"{bytes / 1024d / 1024 / 1024:0.0} Go" : size ?? "Taille inconnue";
+    private static string FormatRate(long bytesPerSecond) => bytesPerSecond > 0 ? $"{bytesPerSecond / 1024d / 1024:0.0} Mo/s" : "en attente de pairs";
+    private double BufferProgress => Download is null || Download.RequiredBufferBytes <= 0 ? 0
+        : Math.Clamp(Download.BufferedBytes * 100d / Download.RequiredBufferBytes, 0, 100);
+    private static string FormatBytes(long bytes) => bytes >= 1024L * 1024
+        ? $"{bytes / (1024d * 1024):0.#} Mo" : $"{Math.Max(0, bytes) / 1024d:0} Ko";
+
+    private void StartPollingForPlayback()
+    {
+        polling?.Cancel();
+        polling = new CancellationTokenSource();
+        StatusMessage = "Téléchargement en cours, préparation de la lecture…";
+        _ = PollUntilStreamableAsync(polling.Token);
+    }
+
+    private async Task PollUntilStreamableAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                if (!await LoadDownloadStatusAsync(ct))
+                {
+                    ErrorMessage ??= "Le téléchargement n’est plus actif.";
+                    await InvokeAsync(StateHasChanged);
+                    break;
+                }
+                if (Download?.CanStream == true)
+                {
+                    PreparePlayback();
+                    await InvokeAsync(StateHasChanged);
+                    break;
+                }
+                StatusMessage = Download?.State == "En attente de pairs"
+                    ? "En attente de pairs…"
+                    : "Mise en mémoire tampon pour une lecture fluide…";
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private void PreparePlayback()
+    {
+        StreamUrl = $"/api/downloads/{TmdbId}/stream?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}";
+        if (IsFrenchAudio) return;
+        subtitleCancellation = new CancellationTokenSource();
+        _ = CheckFrenchSubtitleAsync(subtitleCancellation.Token);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (string.IsNullOrWhiteSpace(StreamUrl) || LibraryPath is not null || progressAttached) return;
+        try
+        {
+            progressModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/playbackProgress.js");
+            dotNetReference ??= DotNetObjectReference.Create(this);
+            await progressModule.InvokeVoidAsync("attach", VideoElement, dotNetReference, Math.Max(0, ResumePosition ?? 0));
+            progressAttached = true;
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    [JSInvokable]
+    public async Task SavePlaybackProgress(double currentTime, double duration)
+    {
+        await ProgressStore.SaveAsync(TmdbId, MediaType, DisplayTitle, currentTime, duration, Media?.Poster, SeasonNumber, EpisodeNumber);
+        if (MediaType != "tv" || SeasonNumber is null || EpisodeNumber is null || duration <= 0
+            || currentTime / duration < .5 || NextEpisodeScheduled || DateTimeOffset.UtcNow < NextEpisodeRetryAfter) return;
+        NextEpisodeScheduled = true;
+        NextEpisodeRetryAfter = DateTimeOffset.UtcNow.AddMinutes(5);
+        try
+        {
+            using var response = await Http.PostAsJsonAsync("/api/watchlist/next-episode",
+                new NextEpisodeRequest(TmdbId, SeasonNumber.Value, EpisodeNumber.Value, Media?.Title ?? MediaTitle ?? "Série",
+                    Media?.OriginalLanguage, Media?.Year));
+            if (!response.IsSuccessStatusCode) NextEpisodeScheduled = false;
+        }
+        catch (HttpRequestException) { NextEpisodeScheduled = false; }
+    }
+
+    private async Task LoadPosterAsync()
+    {
+        try
+        {
+            Media = await Http.GetFromJsonAsync<MediaDetails>($"/api/catalog/{Uri.EscapeDataString(MediaType)}/{TmdbId}");
+        }
+        catch (HttpRequestException) { }
+    }
+
+    private async Task CheckFrenchSubtitleAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var response = await Http.GetAsync(SubtitleUrl, ct);
+            FrenchSubtitleAvailable = response.IsSuccessStatusCode;
+            await InvokeAsync(StateHasChanged);
+            if (!FrenchSubtitleAvailable) await ShowSubtitleErrorAsync("Aucun sous-titre français trouvé", ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+        catch (HttpRequestException) { await ShowSubtitleErrorAsync("Recherche de sous-titres indisponible", ct); }
+    }
+
+    private async Task ShowSubtitleErrorAsync(string message, CancellationToken ct)
+    {
+        SubtitleError = message;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(5), ct);
+            SubtitleError = null;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private bool IsFrenchAudio => Download is not null
+        && (string.Equals(Download.OriginalLanguage, "fr", StringComparison.OrdinalIgnoreCase)
+            || System.Text.RegularExpressions.Regex.IsMatch(Download.SourceTitle,
+                @"(?i)(?<![\p{L}\p{N}])(?:VFF|VFQ|VF2|VFI|VOF|VF)(?![\p{L}\p{N}])"));
+
+    public async ValueTask DisposeAsync()
+    {
+        polling?.Cancel();
+        subtitleCancellation?.Cancel();
+        if (progressModule is not null)
+        {
+            try { await progressModule.InvokeVoidAsync("detach", VideoElement); }
+            catch (JSDisconnectedException) { }
+            await progressModule.DisposeAsync();
+        }
+        dotNetReference?.Dispose();
+    }
+
+    private sealed record MediaDetails(int Id, string Title, string? Overview, string? Poster, string? Backdrop,
+        string? OriginalTitle, string MediaType, double Rating, string? OriginalLanguage, int? Year, List<string> Genres,
+        int? RuntimeMinutes, int? SeasonCount, int? EpisodeCount, string? TrailerUrl);
+    private sealed record SearchResponse(List<TorrentItem> Results, List<string> Errors);
+    private sealed record TorrentItem(string Source, string Title, string Link, string? Size, string? Seeders, string? Leechers, string? Category, bool RightsConfirmed);
+    private sealed record DownloadChoice(string Source, string Title, string Link, string? Size, int PeerCount, bool RightsConfirmed,
+        bool IsOriginalVersion, bool Is1080p, int Score, string SizeLabel);
+    private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string OriginalLanguage, string State, double Progress,
+        long DownloadRate, string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
+        int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream);
+    private sealed record MediaDownloadRequest(int TmdbId, string Title, string MediaType, string? OriginalLanguage, int? Year,
+        string Source, string ResultTitle, string Link, string? Size, bool RightsConfirmed, int? SeasonNumber = null, int? EpisodeNumber = null,
+        int? RuntimeMinutes = null);
+    private sealed record MediaWatchlistRequest(int TmdbId, string MediaType, string Title, string? OriginalLanguage, int? Year,
+        int? SeasonNumber, int? EpisodeNumber, string? EpisodeTitle, int? RuntimeMinutes);
+    private sealed record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
+    private sealed record ErrorResponse(string Error);
+}

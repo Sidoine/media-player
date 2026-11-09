@@ -1,0 +1,63 @@
+@implements IDisposable
+@inject NavigationManager Navigation
+
+@if (IsCatalogPage)
+{
+    <form class="search-box topbar-search" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+        <span>⌕</span>
+        <input @bind="SearchText" @bind:event="oninput" placeholder="@Placeholder" aria-label="Rechercher dans TMDB" />
+        @if (!string.IsNullOrWhiteSpace(SearchText))
+        {
+            <button type="button" class="clear-search" aria-label="Effacer la recherche" @onclick="ClearAsync">×</button>
+        }
+    </form>
+}
+
+@code {
+    private string SearchText = "";
+
+    private string CurrentPath => Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
+    private bool IsCatalogPage => CurrentPath is "" or "films" or "series";
+    private string Placeholder => CurrentPath switch
+    {
+        "films" => "Rechercher un film…",
+        "series" => "Rechercher une série…",
+        _ => "Un film, une série…"
+    };
+
+    protected override void OnInitialized()
+    {
+        SearchText = ReadQuery();
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private string ReadQuery()
+    {
+        var query = Microsoft.AspNetCore.WebUtilities.QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
+        return query.TryGetValue("query", out var value) ? value.ToString() : "";
+    }
+
+    private Task SubmitAsync()
+    {
+        var route = CurrentPath is "films" or "series" ? CurrentPath : "films";
+        var query = SearchText.Trim();
+        Navigation.NavigateTo(string.IsNullOrWhiteSpace(query) ? $"/{route}" : $"/{route}?query={Uri.EscapeDataString(query)}");
+        return Task.CompletedTask;
+    }
+
+    private Task ClearAsync()
+    {
+        SearchText = "";
+        var route = CurrentPath is "films" or "series" ? CurrentPath : "";
+        Navigation.NavigateTo(string.IsNullOrWhiteSpace(route) ? "/" : $"/{route}");
+        return Task.CompletedTask;
+    }
+
+    private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
+    {
+        SearchText = ReadQuery();
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

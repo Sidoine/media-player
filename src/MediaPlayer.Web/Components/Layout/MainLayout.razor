@@ -1,0 +1,16 @@
+@inherits LayoutComponentBase
+<div class="shell">
+    <header class="topbar">
+        <a class="wordmark" href="/" aria-label="Écran, accueil">ÉCRAN</a>
+        <nav aria-label="Navigation principale">
+            <NavLink href="/" Match="NavLinkMatch.All">Accueil</NavLink>
+            <NavLink href="/films">Films</NavLink>
+            <NavLink href="/series">Séries</NavLink>
+            <a href="/bibliotheque">Ma bibliothèque</a>
+        </nav>
+        <CatalogSearch />
+        <a class="profile" href="/configuration" title="Configuration">⚙</a>
+    </header>
+    <main>@Body</main>
+    <footer>ÉCRAN <span>Les métadonnées et affiches proviennent de TMDB. ÉCRAN n’est ni approuvé ni certifié par TMDB.</span></footer>
+</div>

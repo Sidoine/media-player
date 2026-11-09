@@ -1,0 +1,14 @@
+services:
+  media-player:
+    build: .
+    container_name: media-player
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:-}
+      MEDIA_ROOT: /media
+    volumes:
+      - ./data/media:/media:ro
+      - ./config/media-player:/app/App_Data
+    ports:
+      - "8080:8080"
+    restart: unless-stopped

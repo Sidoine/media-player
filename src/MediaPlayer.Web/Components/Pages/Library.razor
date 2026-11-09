@@ -1,0 +1,354 @@
+@page "/bibliotheque"
+@implements IDisposable
+@inject HttpClient Http
+@inject NavigationManager Navigation
+<PageTitle>Ma bibliothèque · Écran</PageTitle>
+
+<div class="settings-page library-page" @onclick="CloseMenu">
+    <a class="back-link" href="/">← Retour à l’accueil</a>
+    <div class="settings-title"><div class="eyebrow">VOTRE COLLECTION</div><h1>Ma bibliothèque</h1><p>Retrouvez et lancez la lecture de vos médias locaux autorisés.</p></div>
+
+    <section class="settings-panel active-downloads-panel">
+        <div class="panel-heading"><div><div class="eyebrow">TRANSFERTS BITTORRENT</div><h2>Téléchargements en cours</h2></div><button class="text-button" @onclick="LoadDownloadsAsync">Actualiser ↻</button></div>
+        @if (IsLoadingDownloads)
+        {
+            <div class="empty-state compact"><strong>Lecture des téléchargements…</strong></div>
+        }
+        else if (Downloads.Count == 0)
+        {
+            <div class="empty-state compact"><strong>Aucun téléchargement en cours</strong></div>
+        }
+        else
+        {
+            <div class="active-download-list">
+                @foreach (var download in Downloads)
+                {
+                    <div class="active-download-row" @key="download.TmdbId + download.MediaType">
+                        <div class="active-download-heading"><strong>@download.Title</strong><span>@download.State</span></div>
+                        <div class="download-progress"><span style="width:@($"{download.Progress:0.##}%")"></span></div>
+                        <small>@download.Progress.ToString("0.0") % · @FormatRate(download.DownloadRate) · @download.AvailablePeers pairs · @download.TrackerCount trackers · DHT @download.DhtState</small>
+                        <div class="active-download-actions">
+                            @if (download.CanStream) { <a class="button button-light" href="@DownloadPlaybackUrl(download)">▶ Lire maintenant</a> }
+                            <button class="remove-button" disabled="@(CancelingKey == DownloadKey(download))" @onclick="() => CancelDownloadAsync(download)">@(CancelingKey == DownloadKey(download) ? "Annulation…" : "Annuler")</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message">@DownloadMessage</div> }
+    </section>
+
+    <section class="settings-panel">
+        <div class="panel-heading"><div><div class="eyebrow">SURVEILLANCE DES INDEXEURS</div><h2>À surveiller</h2></div><button class="text-button" @onclick="LoadWatchlistAsync">Actualiser ↻</button></div>
+        @if (Watchlist.Count == 0)
+        {
+            <div class="empty-state compact"><strong>Aucun média surveillé</strong><p>Ajoutez un film ou un épisode quand aucune source n’est disponible.</p></div>
+        }
+        else
+        {
+            <div class="active-download-list">
+                @foreach (var item in Watchlist)
+                {
+                    <div class="active-download-row" @key="item.Key">
+                        <div class="active-download-heading"><a href="/infos/@item.MediaType/@item.TmdbId"><strong>@item.Title</strong></a><span>@(item.MediaType == "tv" ? $"S{item.SeasonNumber:00}E{item.EpisodeNumber:00}" : "Film")</span></div>
+                        <small>@(item.LastCheckedAt is null ? "Prochaine vérification en cours" : $"Dernière vérification : {item.LastCheckedAt.Value.ToLocalTime():g}") · Recherche toutes les 8 heures</small>
+                        <div class="active-download-actions"><button class="remove-button" disabled="@(RemovingWatchKey == item.Key)" @onclick="() => RemoveWatchlistItemAsync(item)">@(RemovingWatchKey == item.Key ? "Suppression…" : "Retirer")</button></div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    <section class="settings-panel">
+        <div class="panel-heading"><div><div class="eyebrow">FICHIERS LOCAUX</div><h2>Vos médias</h2></div><button class="text-button" @onclick="LoadLibraryAsync">Actualiser ↻</button></div>
+        @if (IsLoading)
+        {
+            <div class="empty-state compact"><strong>Lecture de la bibliothèque…</strong></div>
+        }
+        else if (Files.Count == 0)
+        {
+            <div class="empty-state compact"><span class="empty-icon">▣</span><strong>Aucun média trouvé</strong><p>Configurez <code>MEDIA_ROOT</code> pour parcourir vos fichiers vidéo locaux autorisés.</p></div>
+        }
+        else
+        {
+            <div class="library-list">
+                @foreach (var file in Files)
+                {
+                    <div class="library-entry" @key="file.Path">
+                        <div class="library-item">
+                            <button class="library-item-play" @onclick="() => Play(file)" aria-label="Lire @DisplayMediaName(file.Name)"><span class="library-play">▶</span><span>@DisplayMediaName(file.Name)</span></button>
+                            <div class="library-menu" @onclick:stopPropagation="true">
+                                <button class="library-menu-toggle" aria-label="Actions pour @file.Name" aria-expanded="@(OpenMenuPath == file.Path)" title="Actions" @onclick="() => ToggleMenu(file.Path)">⋮</button>
+                                @if (OpenMenuPath == file.Path)
+                                {
+                                <div class="library-menu-options">
+                                    <button @onclick="() => ShowPropertiesAsync(file)">Propriétés</button>
+                                    <button class="danger" @onclick="() => RequestDelete(file)">Supprimer le fichier…</button>
+                                </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    @if (PropertiesFile is not null)
+    {
+        <div class="library-delete-backdrop" role="presentation">
+            <section class="library-properties-dialog" role="dialog" aria-modal="true" aria-labelledby="properties-title">
+                <header class="library-properties-heading">
+                    <h2 id="properties-title">Propriétés</h2>
+                    <button class="download-close" aria-label="Fermer" @onclick="CloseProperties">×</button>
+                </header>
+                @if (IsLoadingProperties)
+                {
+                    <div class="empty-state compact"><strong>Lecture des propriétés…</strong></div>
+                }
+                else if (Properties is not null)
+                {
+                    <dl class="media-properties-list">
+                        <div><dt>Nom du fichier</dt><dd>@Properties.FileName</dd></div>
+                        <div><dt>Taille</dt><dd>@FormatSize(Properties.SizeBytes)</dd></div>
+                        <div><dt>Durée</dt><dd>@(Properties.Duration ?? "Non disponible")</dd></div>
+                        <div><dt>Résolution</dt><dd>@(Properties.Resolution ?? "Non disponible")</dd></div>
+                        <div><dt>Pistes audio</dt><dd>@(Properties.AudioTracks.Count == 0 ? "Aucune piste détectée" : string.Join(" · ", Properties.AudioTracks.Where(track => !string.IsNullOrWhiteSpace(track))))</dd></div>
+                        <div><dt>Sous-titres</dt><dd>@(Properties.SubtitleTracks.Count == 0 ? "Aucune piste détectée" : string.Join(" · ", Properties.SubtitleTracks))</dd></div>
+                    </dl>
+                }
+                else
+                {
+                    <div class="inline-message error">@(PropertiesError ?? "Les propriétés du fichier sont indisponibles.")</div>
+                }
+            </section>
+        </div>
+    }
+
+    @if (PendingDelete is not null)
+    {
+        <div class="library-delete-backdrop" role="presentation">
+            <section class="library-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
+                <h2 id="delete-title">Supprimer ce fichier ?</h2>
+                <p>@PendingDelete.Name</p>
+                @if (!string.IsNullOrWhiteSpace(DeleteMessage)) { <div class="inline-message error">@DeleteMessage</div> }
+                <div class="library-delete-actions">
+                    <button class="button button-glass" @onclick="CancelDelete" disabled="@IsDeleting">Annuler</button>
+                    <button class="button button-red" @onclick="DeleteFileAsync" disabled="@IsDeleting">@(IsDeleting ? "Suppression…" : "Supprimer")</button>
+                </div>
+            </section>
+        </div>
+    }
+</div>
+
+@code {
+    private List<LocalFile> Files = [];
+    private bool IsLoading = true;
+    private bool IsLoadingDownloads = true;
+    private List<MediaDownloadStatus> Downloads = [];
+    private List<MediaWatchlistItem> Watchlist = [];
+    private string? RemovingWatchKey;
+    private string? CancelingKey;
+    private string? DownloadMessage;
+    private LocalFile? PendingDelete;
+    private string? DeleteMessage;
+    private bool IsDeleting;
+    private LocalFile? PropertiesFile;
+    private MediaPropertiesDto? Properties;
+    private string? PropertiesError;
+    private bool IsLoadingProperties;
+    private string? OpenMenuPath;
+    private CancellationTokenSource? downloadPolling;
+
+    protected override Task OnAfterRenderAsync(bool firstRender) => firstRender ? LoadAndRenderAsync() : Task.CompletedTask;
+
+    private async Task LoadAndRenderAsync()
+    {
+        await Task.WhenAll(LoadLibraryAsync(), LoadDownloadsAsync(), LoadWatchlistAsync());
+        StartPollingDownloads();
+        StateHasChanged();
+    }
+
+    private async Task LoadLibraryAsync()
+    {
+        IsLoading = true;
+        try { Files = (await Http.GetFromJsonAsync<LibraryResponse>("/api/library"))?.Items ?? []; }
+        catch (HttpRequestException) { Files = []; }
+        finally { IsLoading = false; }
+    }
+
+    private void Play(LocalFile file) => Navigation.NavigateTo($"/lecture/fichier/{file.Path}?title={Uri.EscapeDataString(DisplayMediaName(file.Name))}");
+
+    private async Task LoadDownloadsAsync()
+    {
+        IsLoadingDownloads = true;
+        try { Downloads = await Http.GetFromJsonAsync<List<MediaDownloadStatus>>("/api/downloads") ?? []; }
+        catch (HttpRequestException) { Downloads = []; DownloadMessage = "Impossible de lire l’état des téléchargements."; }
+        finally { IsLoadingDownloads = false; }
+    }
+
+    private async Task LoadWatchlistAsync()
+    {
+        try { Watchlist = await Http.GetFromJsonAsync<List<MediaWatchlistItem>>("/api/watchlist") ?? []; }
+        catch (HttpRequestException) { Watchlist = []; }
+    }
+
+    private async Task RemoveWatchlistItemAsync(MediaWatchlistItem item)
+    {
+        RemovingWatchKey = item.Key;
+        try
+        {
+            using var response = await Http.DeleteAsync($"/api/watchlist/{Uri.EscapeDataString(item.Key)}");
+            if (response.IsSuccessStatusCode) Watchlist.RemoveAll(entry => entry.Key == item.Key);
+        }
+        catch (HttpRequestException) { DownloadMessage = "Impossible de modifier la liste de surveillance."; }
+        finally { RemovingWatchKey = null; }
+    }
+
+    private async Task CancelDownloadAsync(MediaDownloadStatus download)
+    {
+        var key = DownloadKey(download);
+        CancelingKey = key;
+        DownloadMessage = null;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/downloads/{download.TmdbId}?{DownloadQuery(download)}");
+            if (response.IsSuccessStatusCode)
+            {
+                DownloadMessage = $"Téléchargement de « {download.Title} » annulé.";
+                await LoadDownloadsAsync();
+            }
+            else DownloadMessage = "Le téléchargement n’a pas pu être annulé.";
+        }
+        catch (HttpRequestException) { DownloadMessage = "Impossible de joindre le moteur BitTorrent."; }
+        finally { CancelingKey = null; }
+    }
+
+    private static string DisplayMediaName(string name)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(name,
+            @"(?i)(?:\bS(?<season>\d{1,2})\s*E(?<episode>\d{1,3})\b|\b(?<season>\d{1,2})x(?<episode>\d{1,3})\b)");
+        if (!match.Success) return name;
+
+        var series = name[..match.Index].Trim(' ', '.', '-', '_', '[', '(');
+        if (string.IsNullOrWhiteSpace(series))
+            series = name[(match.Index + match.Length)..].Trim(' ', '.', '-', '_', ']', ')');
+        if (string.IsNullOrWhiteSpace(series)) series = name;
+
+        var season = int.Parse(match.Groups["season"].Value);
+        var episode = int.Parse(match.Groups["episode"].Value);
+        return $"{series} — Saison {season}, épisode {episode}";
+    }
+
+    private async Task ShowPropertiesAsync(LocalFile file)
+    {
+        CloseMenu();
+        PropertiesFile = file;
+        Properties = null;
+        PropertiesError = null;
+        IsLoadingProperties = true;
+        try
+        {
+            var response = await Http.GetAsync($"/api/library/properties/{Uri.EscapeDataString(file.Path)}");
+            if (response.IsSuccessStatusCode)
+                Properties = await response.Content.ReadFromJsonAsync<MediaPropertiesDto>();
+            else PropertiesError = "Les propriétés n’ont pas pu être récupérées.";
+        }
+        catch (HttpRequestException) { PropertiesError = "Impossible de joindre le serveur."; }
+        finally { IsLoadingProperties = false; }
+    }
+
+    private void CloseProperties()
+    {
+        PropertiesFile = null;
+        Properties = null;
+    }
+
+    private void RequestDelete(LocalFile file)
+    {
+        CloseMenu();
+        PendingDelete = file;
+        DeleteMessage = null;
+    }
+
+    private void ToggleMenu(string path) => OpenMenuPath = OpenMenuPath == path ? null : path;
+
+    private void CloseMenu() => OpenMenuPath = null;
+
+    private void CancelDelete()
+    {
+        if (IsDeleting) return;
+        PendingDelete = null;
+        DeleteMessage = null;
+    }
+
+    private async Task DeleteFileAsync()
+    {
+        if (PendingDelete is null || IsDeleting) return;
+        IsDeleting = true;
+        DeleteMessage = null;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/library/{Uri.EscapeDataString(PendingDelete.Path)}");
+            if (response.IsSuccessStatusCode)
+            {
+                Files.RemoveAll(file => file.Path == PendingDelete.Path);
+                PendingDelete = null;
+            }
+            else DeleteMessage = "Le fichier n’a pas pu être supprimé.";
+        }
+        catch (HttpRequestException) { DeleteMessage = "Impossible de joindre le serveur."; }
+        finally { IsDeleting = false; }
+    }
+
+    private void StartPollingDownloads()
+    {
+        downloadPolling?.Cancel();
+        downloadPolling = new CancellationTokenSource();
+        _ = PollDownloadsAsync(downloadPolling.Token);
+    }
+
+    private async Task PollDownloadsAsync(CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(2));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                await LoadDownloadsAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
+    }
+
+    private static string DownloadKey(MediaDownloadStatus download) => $"{download.MediaType}-{download.TmdbId}-{download.SeasonNumber}-{download.EpisodeNumber}";
+    private static string DownloadPlaybackUrl(MediaDownloadStatus download) =>
+        $"/lecture/{download.MediaType}/{download.TmdbId}" + (download.SeasonNumber is not null && download.EpisodeNumber is not null
+            ? $"?seasonNumber={download.SeasonNumber}&episodeNumber={download.EpisodeNumber}"
+            : "");
+    private static string DownloadQuery(MediaDownloadStatus download) =>
+        $"mediaType={Uri.EscapeDataString(download.MediaType)}" + (download.SeasonNumber is not null && download.EpisodeNumber is not null
+            ? $"&seasonNumber={download.SeasonNumber}&episodeNumber={download.EpisodeNumber}"
+            : "");
+    private static string FormatRate(long bytesPerSecond) => bytesPerSecond > 0 ? $"{bytesPerSecond / 1024d / 1024:0.0} Mo/s" : "débit nul";
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        >= 1_000_000_000 => $"{bytes / 1_000_000_000d:0.##} Go",
+        >= 1_000_000 => $"{bytes / 1_000_000d:0.##} Mo",
+        >= 1_000 => $"{bytes / 1_000d:0.##} Ko",
+        _ => $"{bytes} octets"
+    };
+
+    public void Dispose() => downloadPolling?.Cancel();
+
+    private sealed record LibraryResponse(List<LocalFile> Items);
+    private sealed record LocalFile(string Name, string Path);
+    private sealed record MediaPropertiesDto(string FileName, long SizeBytes, string? Duration, string? Resolution,
+        List<string?> AudioTracks, List<string> SubtitleTracks);
+    private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string State, double Progress, long DownloadRate,
+        string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
+        int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream);
+    private sealed record MediaWatchlistItem(string Key, int TmdbId, string MediaType, string Title, string OriginalLanguage,
+        int? Year, int? SeasonNumber, int? EpisodeNumber, string? EpisodeTitle, int? RuntimeMinutes, DateTimeOffset AddedAt, DateTimeOffset? LastCheckedAt);
+}

@@ -1,0 +1,357 @@
+@page "/configuration"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+<PageTitle>Configuration · Écran</PageTitle>
+
+<div class="settings-page">
+    <a class="back-link" href="/">← Retour au catalogue</a>
+    <div class="settings-title"><div class="eyebrow">PRÉFÉRENCES</div><h1>Configuration</h1><p>Gérez les sources de recherche de votre espace cinéma.</p></div>
+
+    <section class="settings-panel">
+        <div class="panel-heading"><div><div class="eyebrow">ACCÈS AUX SERVICES</div><h2>Clés API</h2></div></div>
+        <p class="section-intro">Renseignez les clés TMDB et OpenSubtitles. Elles sont enregistrées localement de façon protégée. Les secrets .NET et variables d’environnement restent prioritaires.</p>
+        <form class="source-form settings-source-form" @onsubmit="SaveApiCredentialsAsync" @onsubmit:preventDefault>
+            <label>TMDB Read Access Token<input @bind="TmdbTokenInput" type="password" autocomplete="new-password" placeholder="@(CredentialStatus?.TmdbSource == "local" ? "Clé locale enregistrée · saisir pour remplacer" : "TMDB Read Access Token")" disabled="@(CredentialStatus?.TmdbSource is "secret" or "environment")" /></label>
+            <label>Clé API OpenSubtitles<input @bind="OpenSubtitlesKeyInput" type="password" autocomplete="new-password" placeholder="@(CredentialStatus?.OpenSubtitlesSource == "local" ? "Clé locale enregistrée · saisir pour remplacer" : "Clé API OpenSubtitles")" disabled="@(CredentialStatus?.OpenSubtitlesSource is "secret" or "environment")" /></label>
+            <button class="button button-light" disabled="@IsSavingCredentials">@(IsSavingCredentials ? "Enregistrement…" : "Enregistrer les clés")</button>
+        </form>
+        @if (CredentialStatus is not null) { <p class="credential-status">TMDB : @CredentialSourceLabel(CredentialStatus.TmdbSource) · OpenSubtitles : @CredentialSourceLabel(CredentialStatus.OpenSubtitlesSource)</p> }
+        @if (!string.IsNullOrWhiteSpace(CredentialMessage)) { <div class="inline-message">@CredentialMessage</div> }
+    </section>
+
+    <section class="settings-panel">
+        <div class="panel-heading"><div><div class="eyebrow">INDEXEURS PERSONNELS</div><h2>Sources Torznab</h2></div><span class="source-count">@Sources.Count source(s)</span></div>
+        <p class="section-intro">Ajoutez les URL API et clés de vos indexeurs Torznab compatibles. Une attestation de droits est requise pour chaque source.</p>
+        <form class="source-form settings-source-form" @onsubmit="AddSourceAsync" @onsubmit:preventDefault>
+            <label>Nom de la source<input @bind="NewSourceName" placeholder="Ex. Prowlarr" maxlength="100" required /></label>
+            <label>URL de l’API Torznab<input @bind="NewSourceUrl" type="url" placeholder="https://serveur/1/api" required /></label>
+            <label>Clé API<input @bind="NewSourceKey" type="password" placeholder="Votre clé API" autocomplete="new-password" required /></label>
+            <label class="rights-check"><input @bind="RightsConfirmed" type="checkbox" /> Je confirme que les médias de cette source sont téléchargeables par moi.</label>
+            <button class="button button-light" disabled="@(!RightsConfirmed)">Ajouter la source <span>＋</span></button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(SourceMessage)) { <div class="inline-message">@SourceMessage</div> }
+        <div class="source-list">
+            @foreach (var source in Sources)
+            {
+                <div class="source-row" @key="source.Id"><span class="source-mark">↗</span><div class="source-info"><strong>@source.Name</strong><small>@source.Url</small></div><span class="source-ok">Droits attestés</span><button class="remove-button" title="Retirer la source" @onclick="() => RemoveSourceAsync(source.Id)">Retirer</button></div>
+            }
+            @if (Sources.Count == 0) { <div class="empty-state compact"><strong>Aucune source ajoutée</strong><p>Ajoutez un indexeur Torznab pour activer les recherches.</p></div> }
+        </div>
+    </section>
+
+    <section class="settings-panel" id="bittorrent-trackers">
+        <div class="panel-heading"><div><div class="eyebrow">CONNECTIVITÉ P2P</div><h2>Trackers BitTorrent</h2></div><span class="source-count">@TrackerUrlsText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length configuré(s)</span></div>
+        <p class="section-intro">Ces trackers sont ajoutés aux liens magnet sans trackers. Le DHT reste activé. Une adresse par ligne (UDP, HTTP ou HTTPS).</p>
+        <form class="tracker-settings" @onsubmit="SaveTrackersAsync" @onsubmit:preventDefault>
+            <textarea @bind="TrackerUrlsText" rows="5" aria-label="Adresses des trackers BitTorrent" placeholder="udp://tracker.example:1337/announce"></textarea>
+            <button class="button button-light" disabled="@IsSavingTrackers">@(IsSavingTrackers ? "Enregistrement…" : "Enregistrer les trackers")</button>
+        </form>
+        @if (!string.IsNullOrWhiteSpace(TrackerMessage)) { <div class="inline-message">@TrackerMessage</div> }
+    </section>
+
+    <section class="settings-panel definition-panel">
+        <div class="panel-heading"><div><div class="eyebrow">CATALOGUE INTÉGRÉ</div><h2>Choisir une définition</h2></div><span class="source-count">@SelectedIndexers.Count sélectionnée(s)</span></div>
+        <p class="section-intro">Choisissez un indexeur dans les définitions téléchargées depuis GitHub. La recherche Cardigann prend actuellement en charge les définitions à réponse JSON; les paramètres de compte et les réponses HTML/XML ne sont pas encore pris en charge.</p>
+        <form class="definition-picker" @onsubmit="SearchDefinitionsAsync" @onsubmit:preventDefault>
+            <input @bind="DefinitionQuery" placeholder="Filtrer les indexeurs par nom…" aria-label="Filtrer les définitions d’indexeurs" />
+            <button class="button button-glass" disabled="@IsLoadingDefinitions">@(IsLoadingDefinitions ? "Chargement…" : "Filtrer")</button>
+        </form>
+        <div class="definition-add-row">
+            <select @bind="SelectedDefinitionId" aria-label="Définition à sélectionner">
+                <option value="">Choisir une source parmi @DefinitionCountText…</option>
+                @foreach (var definition in Definitions)
+                {
+                    <option value="@definition.Id">@definition.Name · @definition.AccessType</option>
+                }
+            </select>
+            <button class="button button-light" disabled="@(string.IsNullOrWhiteSpace(SelectedDefinitionId) || !DefinitionRightsConfirmed || IsAddingDefinition)" @onclick="AddSelectedIndexerAsync">@(IsAddingDefinition ? "Ajout…" : "Ajouter la source ＋")</button>
+        </div>
+        <label class="rights-check definition-consent"><input @bind="DefinitionRightsConfirmed" type="checkbox" /> Je confirme disposer des droits nécessaires pour les médias de cette source.</label>
+        @if (!string.IsNullOrWhiteSpace(DefinitionMessage)) { <div class="inline-message">@DefinitionMessage</div> }
+        <div class="source-list">
+            @foreach (var source in SelectedIndexers)
+            {
+                <div class="source-row" @key="source.Id"><span class="source-mark">✦</span><div class="source-info"><strong>@source.Name</strong><small>Définition Cardigann · @source.DefinitionId</small></div><span class="source-ok">Sélectionnée</span><button class="remove-button" title="Retirer la source" @onclick="() => RemoveSelectedIndexerAsync(source.Id)">Retirer</button></div>
+            }
+            @if (SelectedIndexers.Count == 0) { <div class="empty-state compact"><strong>Aucune définition sélectionnée</strong><p>Les indexeurs ajoutés apparaîtront ici.</p></div> }
+        </div>
+    </section>
+
+    <section class="settings-panel cache-panel">
+        <div class="panel-heading"><div><div class="eyebrow">SYNCHRONISATION LOCALE</div><h2>Définitions d’indexeurs</h2></div><button class="text-button" disabled="@CacheBusy" @onclick="RefreshDefinitionsAsync">@(CacheBusy ? "Synchronisation…" : "Actualiser ↻")</button></div>
+        <p class="section-intro">Les définitions Cardigann v11 sont conservées dans le cache local et synchronisées au plus une fois par semaine.</p>
+        @if (CacheStatus is null)
+        {
+            <div class="cache-status">Lecture de l’état du cache…</div>
+        }
+        else if (CacheStatus.Available)
+        {
+            <div class="cache-status"><span class="cache-led"></span><strong>@CacheStatus.DefinitionCount définitions en cache</strong><span>Version @CacheStatus.DefinitionVersion</span><span> @if (CacheStatus.FetchedAtUtc is not null) { <span>Synchronisées le @CacheStatus.FetchedAtUtc.Value.ToLocalTime().ToString("g")</span> }</span></div>
+        }
+        else
+        {
+            <div class="cache-status cache-unavailable"><span class="cache-led"></span>Aucune copie locale disponible. Une tentative sera faite au prochain démarrage.</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(CacheMessage)) { <div class="inline-message">@CacheMessage</div> }
+    </section>
+
+    <section class="settings-panel search-panel">
+        <div class="panel-heading"><div><div class="eyebrow">RECHERCHE FÉDÉRÉE</div><h2>Tester les sources</h2></div></div>
+        <p class="section-intro">La recherche interroge vos catalogues Torznab et les définitions Cardigann sélectionnées.</p>
+        <form class="torrent-search" @onsubmit="SearchTorznabAsync" @onsubmit:preventDefault>
+            <input @bind="TorrentQuery" placeholder="Saisissez le titre d’un média…" aria-label="Rechercher dans les sources Torznab" required />
+            <button class="button button-red" disabled="@((Sources.Count == 0 && SelectedIndexers.Count == 0) || IsSearching)" title="@((Sources.Count == 0 && SelectedIndexers.Count == 0) ? "Ajoutez un catalogue Torznab ou sélectionnez une définition Cardigann." : null)">@(IsSearching ? "Recherche…" : "Rechercher")</button>
+        </form>
+        @if (Sources.Count == 0 && SelectedIndexers.Count == 0)
+        {
+            <div class="inline-message">Ajoutez un catalogue Torznab ou sélectionnez une définition Cardigann pour activer la recherche.</div>
+        }
+        @if (!string.IsNullOrWhiteSpace(SearchMessage)) { <div class="inline-message">@SearchMessage</div> }
+        @if (Results.Count > 0)
+        {
+            <div class="torrent-results">
+                @foreach (var result in Results)
+                {
+                    <div class="torrent-result" @key="result.Link"><div><strong>@result.Title</strong><small>@result.Source @if (result.Size is not null) { <span> · @FormatSize(result.Size)</span> } · @result.PairCount pairs</small></div><a class="text-button" href="@result.Link" target="_blank" rel="noreferrer">Ouvrir ↗</a></div>
+                }
+            </div>
+        }
+    </section>
+
+    <p class="rights-note">L’attestation de droits est fournie par l’utilisateur et n’est pas une vérification indépendante des licences du catalogue.</p>
+</div>
+
+@code {
+    private List<SourceItem> Sources = [];
+    private List<DefinitionItem> Definitions = [];
+    private List<SelectedIndexerItem> SelectedIndexers = [];
+    private List<TorrentItem> Results = [];
+    private string NewSourceName = "";
+    private string NewSourceUrl = "";
+    private string NewSourceKey = "";
+    private string TorrentQuery = "";
+    private string DefinitionQuery = "";
+    private string TrackerUrlsText = "";
+    private string TmdbTokenInput = "";
+    private string OpenSubtitlesKeyInput = "";
+    private string SelectedDefinitionId = "";
+    private bool RightsConfirmed;
+    private bool DefinitionRightsConfirmed;
+    private bool IsLoadingDefinitions;
+    private bool IsAddingDefinition;
+    private bool IsSearching;
+    private bool IsSavingTrackers;
+    private bool IsSavingCredentials;
+    private bool CacheBusy;
+    private IndexerDefinitionCacheStatus? CacheStatus;
+    private string? SourceMessage;
+    private string? SearchMessage;
+    private string? CacheMessage;
+    private string? DefinitionMessage;
+    private string? TrackerMessage;
+    private string? CredentialMessage;
+    private CredentialStatusResponse? CredentialStatus;
+    private string DefinitionCountText => CacheStatus is { DefinitionCount: > 0 } ? CacheStatus.DefinitionCount.ToString() : "les définitions disponibles";
+
+    protected override Task OnAfterRenderAsync(bool firstRender) => firstRender ? LoadAndRenderAsync() : Task.CompletedTask;
+
+    private async Task LoadAndRenderAsync()
+    {
+        await Task.WhenAll(LoadSourcesAsync(), LoadCacheStatusAsync(), LoadSelectedIndexersAsync(), LoadDefinitionsAsync(), LoadTrackersAsync(), LoadCredentialStatusAsync());
+        StateHasChanged();
+    }
+
+    private async Task LoadCredentialStatusAsync()
+    {
+        try { CredentialStatus = await Http.GetFromJsonAsync<CredentialStatusResponse>("/api/configuration/credentials"); }
+        catch (HttpRequestException) { CredentialMessage = "Impossible de lire l’état des clés API."; }
+    }
+
+    private async Task SaveApiCredentialsAsync()
+    {
+        IsSavingCredentials = true;
+        CredentialMessage = null;
+        try
+        {
+            var response = await Http.PutAsJsonAsync("/api/configuration/credentials", new { tmdbReadAccessToken = TmdbTokenInput, openSubtitlesApiKey = OpenSubtitlesKeyInput });
+            if (!response.IsSuccessStatusCode) { CredentialMessage = "Impossible d’enregistrer les clés API."; return; }
+            CredentialStatus = await response.Content.ReadFromJsonAsync<CredentialStatusResponse>();
+            TmdbTokenInput = OpenSubtitlesKeyInput = "";
+            CredentialMessage = CredentialStatus?.AllConfigured == true ? "Clés enregistrées. Redirection vers l’accueil…" : "Clés enregistrées. Les deux services doivent être configurés pour continuer.";
+        }
+        catch (HttpRequestException) { CredentialMessage = "Impossible d’enregistrer les clés API."; }
+        finally { IsSavingCredentials = false; }
+        if (CredentialStatus?.AllConfigured == true) Navigation.NavigateTo("/", replace: true);
+    }
+
+    private static string CredentialSourceLabel(string? source) => source switch { "secret" => "secret .NET", "environment" => "variable d’environnement", "local" => "enregistrée localement", _ => "manquante" };
+
+    private async Task LoadTrackersAsync()
+    {
+        try { TrackerUrlsText = string.Join(Environment.NewLine, (await Http.GetFromJsonAsync<TrackerListResponse>("/api/bittorrent/trackers"))?.Urls ?? []); }
+        catch (HttpRequestException) { TrackerMessage = "Impossible de lire la configuration des trackers."; }
+    }
+
+    private async Task SaveTrackersAsync()
+    {
+        IsSavingTrackers = true;
+        TrackerMessage = null;
+        try
+        {
+            var urls = TrackerUrlsText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            var response = await Http.PutAsJsonAsync("/api/bittorrent/trackers", new { urls });
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                TrackerMessage = error?.Error ?? "La configuration des trackers est invalide.";
+                return;
+            }
+            var saved = await response.Content.ReadFromJsonAsync<TrackerListResponse>();
+            TrackerUrlsText = string.Join(Environment.NewLine, saved?.Urls ?? []);
+            TrackerMessage = "Trackers enregistrés. Les nouveaux téléchargements les utilisent immédiatement ; les transferts déjà actifs les prendront en compte au prochain démarrage.";
+        }
+        catch (HttpRequestException) { TrackerMessage = "Impossible d’enregistrer les trackers."; }
+        finally { IsSavingTrackers = false; }
+    }
+
+    private async Task LoadCacheStatusAsync()
+    {
+        try { CacheStatus = await Http.GetFromJsonAsync<IndexerDefinitionCacheStatus>("/api/indexer-definitions/status"); }
+        catch (HttpRequestException) { CacheMessage = "Impossible de lire l’état du cache."; }
+    }
+
+    private async Task RefreshDefinitionsAsync()
+    {
+        CacheBusy = true;
+        CacheMessage = null;
+        try
+        {
+            CacheStatus = await (await Http.PostAsync("/api/indexer-definitions/refresh", null)).Content.ReadFromJsonAsync<IndexerDefinitionCacheStatus>();
+            await LoadDefinitionsAsync();
+        }
+        catch (HttpRequestException) { CacheMessage = "La synchronisation GitHub a échoué; le cache existant est conservé."; }
+        finally { CacheBusy = false; }
+    }
+
+    private async Task LoadDefinitionsAsync()
+    {
+        IsLoadingDefinitions = true;
+        try { Definitions = await Http.GetFromJsonAsync<List<DefinitionItem>>("/api/indexer-definitions") ?? []; }
+        catch (HttpRequestException) { DefinitionMessage = "Impossible de lire les définitions locales."; }
+        finally { IsLoadingDefinitions = false; }
+    }
+
+    private async Task SearchDefinitionsAsync()
+    {
+        IsLoadingDefinitions = true;
+        DefinitionMessage = null;
+        try { Definitions = await Http.GetFromJsonAsync<List<DefinitionItem>>($"/api/indexer-definitions?query={Uri.EscapeDataString(DefinitionQuery)}") ?? []; }
+        catch (HttpRequestException) { DefinitionMessage = "Impossible de filtrer les définitions locales."; }
+        finally { IsLoadingDefinitions = false; }
+    }
+
+    private async Task LoadSelectedIndexersAsync()
+    {
+        try { SelectedIndexers = await Http.GetFromJsonAsync<List<SelectedIndexerItem>>("/api/selected-indexers") ?? []; }
+        catch (HttpRequestException) { DefinitionMessage = "Impossible de charger les indexeurs sélectionnés."; }
+    }
+
+    private async Task AddSelectedIndexerAsync()
+    {
+        IsAddingDefinition = true;
+        DefinitionMessage = null;
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/selected-indexers", new { definitionId = SelectedDefinitionId, rightsConfirmed = DefinitionRightsConfirmed });
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                DefinitionMessage = error?.Error ?? "Impossible d’ajouter cette définition.";
+                return;
+            }
+            DefinitionRightsConfirmed = false;
+            DefinitionMessage = "Définition ajoutée à votre liste de sources.";
+            await LoadSelectedIndexersAsync();
+        }
+        catch (HttpRequestException) { DefinitionMessage = "Impossible d’enregistrer cette définition."; }
+        finally { IsAddingDefinition = false; }
+    }
+
+    private async Task RemoveSelectedIndexerAsync(Guid id)
+    {
+        try
+        {
+            await Http.DeleteAsync($"/api/selected-indexers/{id}");
+            await LoadSelectedIndexersAsync();
+            DefinitionMessage = "Définition retirée de la liste.";
+        }
+        catch (HttpRequestException) { DefinitionMessage = "Impossible de retirer cette définition."; }
+    }
+
+    private async Task LoadSourcesAsync()
+    {
+        try { Sources = await Http.GetFromJsonAsync<List<SourceItem>>("/api/torrent-catalogs") ?? []; }
+        catch (HttpRequestException) { SourceMessage = "Impossible de charger les sources."; }
+    }
+
+    private async Task AddSourceAsync()
+    {
+        SourceMessage = null;
+        if (!RightsConfirmed) { SourceMessage = "Confirmez l’attestation de droits pour ajouter cette source."; return; }
+        try
+        {
+            var response = await Http.PostAsJsonAsync("/api/torrent-catalogs", new { name = NewSourceName, url = NewSourceUrl, apiKey = NewSourceKey, rightsConfirmed = RightsConfirmed });
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                SourceMessage = error?.Error ?? "Impossible d’ajouter la source. Vérifiez les champs.";
+                return;
+            }
+            NewSourceName = NewSourceUrl = NewSourceKey = "";
+            RightsConfirmed = false;
+            SourceMessage = "Source Torznab ajoutée.";
+            await LoadSourcesAsync();
+        }
+        catch (HttpRequestException) { SourceMessage = "Le serveur n’a pas pu enregistrer la source."; }
+    }
+
+    private async Task RemoveSourceAsync(Guid id)
+    {
+        try
+        {
+            await Http.DeleteAsync($"/api/torrent-catalogs/{id}");
+            await LoadSourcesAsync();
+            SourceMessage = "Source retirée.";
+        }
+        catch (HttpRequestException) { SourceMessage = "Impossible de retirer cette source."; }
+    }
+
+    private async Task SearchTorznabAsync()
+    {
+        IsSearching = true;
+        SearchMessage = null;
+        Results = [];
+        try
+        {
+            var response = await Http.GetFromJsonAsync<SearchResponse>($"/api/torrent-catalogs/search?query={Uri.EscapeDataString(TorrentQuery)}");
+            Results = response?.Results ?? [];
+            SearchMessage = response?.Errors?.Count > 0 ? string.Join(" ", response.Errors) : Results.Count == 0 ? "Aucun résultat dans les sources configurées." : null;
+        }
+        catch (HttpRequestException) { SearchMessage = "La recherche Torznab a échoué."; }
+        finally { IsSearching = false; }
+    }
+
+    private static string FormatSize(string size) => long.TryParse(size, out var bytes) && bytes > 0 ? $"{bytes / 1024d / 1024 / 1024:0.0} Go" : size;
+    private sealed record SourceItem(Guid Id, string Name, string Url, bool RightsConfirmed, DateTimeOffset AddedAt);
+    private sealed record TorrentItem(string Source, string Title, string Link, string? Size, string? Seeders, string? Leechers, string? Category, bool RightsConfirmed)
+    {
+        public int PairCount => (int.TryParse(Seeders, out var seeders) ? seeders : 0) + (int.TryParse(Leechers, out var leechers) ? leechers : 0);
+    }
+    private sealed record SearchResponse(List<TorrentItem> Results, List<string> Errors);
+    private sealed record ErrorResponse(string Error);
+    private sealed record IndexerDefinitionCacheStatus(bool Available, int DefinitionCount, DateTimeOffset? FetchedAtUtc, string? ArchiveSha256, string SourceUrl, string? DefinitionVersion);
+    private sealed record DefinitionItem(string Id, string Name, string? Description, string? Language, string? AccessType, string? Homepage);
+    private sealed record SelectedIndexerItem(Guid Id, string DefinitionId, string Name, bool RightsConfirmed, DateTimeOffset AddedAt);
+    private sealed record TrackerListResponse(List<string> Urls);
+    private sealed record CredentialStatusResponse(bool TmdbConfigured, string TmdbSource, bool OpenSubtitlesConfigured, string OpenSubtitlesSource, bool AllConfigured);
+}

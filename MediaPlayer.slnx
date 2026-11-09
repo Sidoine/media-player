@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MediaPlayer.Web/MediaPlayer.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MediaPlayer.Tests/MediaPlayer.Tests.csproj" />
+  </Folder>
+</Solution>

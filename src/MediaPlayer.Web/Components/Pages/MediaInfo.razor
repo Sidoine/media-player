@@ -1,0 +1,214 @@
+@page "/infos/{MediaType}/{TmdbId:int}"
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject WatchProgressStore ProgressStore
+
+<PageTitle>@(Details?.Title ?? "Informations") · Écran</PageTitle>
+
+@if (IsLoading)
+{
+    <section class="media-info-loading"><span class="spinner"></span><span>Chargement des informations…</span></section>
+}
+else if (!string.IsNullOrWhiteSpace(ErrorMessage))
+{
+    <section class="media-info-error"><h1>Informations indisponibles</h1><p>@ErrorMessage</p><a class="button button-light" href="@CatalogUrl">← Retour au catalogue</a></section>
+}
+else if (Details is not null)
+{
+    <div class="media-info-page @(MediaType == "tv" ? "series-info-page" : "")">
+        <section class="media-info-hero" style="@BackdropStyle">
+            <div class="media-info-shade"></div>
+            <div class="media-info-copy">
+                <a class="media-info-back" href="@CatalogUrl">← Retour à @(MediaType == "tv" ? "Séries" : "Films")</a>
+                <div class="eyebrow">@(MediaType == "tv" ? "SÉRIE" : "FILM") · TMDB</div>
+                <h1>@Details.Title</h1>
+                <div class="media-info-facts">
+                    @if (Details.Year is not null) { <span>@Details.Year</span> }
+                    @if (Details.Rating > 0) { <span>★ @Details.Rating.ToString("0.0") / 10</span> }
+                    @if (Details.RuntimeMinutes is not null) { <span>@FormatRuntime(Details.RuntimeMinutes.Value)</span> }
+                    @if (Details.SeasonCount is not null) { <span>@Details.SeasonCount saison(s) · @Details.EpisodeCount épisode(s)</span> }
+                </div>
+                @if (Details.Genres.Count > 0)
+                {
+                    <div class="media-info-genres">@string.Join(" · ", Details.Genres)</div>
+                }
+                <p class="media-info-overview">@(string.IsNullOrWhiteSpace(Details.Overview) ? "Aucun synopsis n’est disponible." : Details.Overview)</p>
+                <div class="media-info-actions">
+                    @if (MediaType == "tv")
+                    {
+                        <button class="button button-light" disabled="@(NextEpisodeToPlay is null)" @onclick="PlayAsync">▶ <span>@PlayButtonLabel</span></button>
+                    }
+                    else
+                    {
+                        <button class="button button-light" @onclick="PlayAsync">▶ <span>Lecture</span></button>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(Details.TrailerUrl))
+                    {
+                        <button class="button button-glass" @onclick="() => ShowTrailer = true">▷ <span>Voir la bande-annonce</span></button>
+                    }
+                </div>
+            </div>
+        </section>
+        @if (MediaType == "tv")
+        {
+            <section class="series-episodes section" aria-label="Épisodes de @Details.Title">
+                <div class="section-heading"><div><div class="eyebrow">GUIDE DES ÉPISODES</div><h2>Épisodes</h2></div></div>
+                @if (Details.Seasons.Count > 0)
+                {
+                    <div class="season-tabs" role="tablist" aria-label="Saisons">
+                        @foreach (var season in Details.Seasons.Where(item => item.EpisodeCount > 0).OrderBy(item => item.SeasonNumber))
+                        {
+                            <button type="button" role="tab" aria-selected="@(SelectedSeasonNumber == season.SeasonNumber)" class="@(SelectedSeasonNumber == season.SeasonNumber ? "active" : "")" @onclick="() => SelectSeason(season.SeasonNumber)">@season.Name</button>
+                        }
+                    </div>
+                    @if (SelectedEpisodes.Count > 0)
+                    {
+                        <div class="episode-list" role="tabpanel">
+                            @foreach (var episode in SelectedEpisodes)
+                            {
+                                var progress = FindProgress(episode);
+                                <article class="episode-card" @key="episode.EpisodeNumber">
+                                    <div class="episode-still">
+                                        @if (!string.IsNullOrWhiteSpace(episode.Still)) { <img src="@episode.Still" alt="Image de l’épisode @episode.EpisodeNumber" loading="lazy" /> }
+                                        else { <span>S@episode.SeasonNumber.ToString("00") · E@episode.EpisodeNumber.ToString("00")</span> }
+                                    </div>
+                                    <div class="episode-copy">
+                                        <div class="episode-heading"><strong>@episode.EpisodeNumber.ToString("00") · @episode.Title</strong>@if (progress?.IsCompleted == true) { <span class="episode-watched">Vu</span> }</div>
+                                        <small>Saison @episode.SeasonNumber · Épisode @episode.EpisodeNumber@if (!string.IsNullOrWhiteSpace(episode.AirDate)) { <span> · @FormatAirDate(episode.AirDate)</span> }@if (episode.RuntimeMinutes is not null) { <span> · @FormatRuntime(episode.RuntimeMinutes.Value)</span> }</small>
+                                        <p>@(string.IsNullOrWhiteSpace(episode.Overview) ? "Aucun résumé disponible." : episode.Overview)</p>
+                                        @if (progress is { IsCompleted: false })
+                                        {
+                                            <div class="episode-progress"><span style="width:@($"{progress.ProgressPercent:0.#}%")"></span></div>
+                                            <small>En cours · @progress.ProgressPercent.ToString("0") %</small>
+                                        }
+                                        <button class="button button-light episode-play" @onclick="() => PlayEpisode(episode)">▶ <span>@(progress is { IsCompleted: false } ? "Reprendre l’épisode" : "Lire l’épisode")</span></button>
+                                    </div>
+                                </article>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <p class="episode-empty">Les épisodes de cette saison ne sont pas disponibles pour le moment.</p>
+                    }
+                }
+                else
+                {
+                    <p class="episode-empty">La liste des épisodes n’est pas disponible.</p>
+                }
+            </section>
+        }
+    </div>
+}
+
+@if (ShowTrailer && Details is not null)
+{
+    <div class="trailer-overlay" role="presentation" @onclick="() => ShowTrailer = false">
+        <section class="trailer-dialog" role="dialog" aria-modal="true" aria-label="Bande-annonce de @Details.Title" @onclick:stopPropagation="true">
+            <button class="download-close" aria-label="Fermer la bande-annonce" @onclick="() => ShowTrailer = false">×</button>
+            <iframe src="@Details.TrailerUrl" title="Bande-annonce de @Details.Title" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public string MediaType { get; set; } = "movie";
+    [Parameter] public int TmdbId { get; set; }
+
+    private MediaDetails? Details;
+    private bool IsLoading = true;
+    private string? ErrorMessage;
+    private bool ShowTrailer;
+    private int SelectedSeasonNumber;
+    private Dictionary<int, List<EpisodeDetails>> EpisodesBySeason = [];
+    private List<WatchProgressEntry> EpisodeProgress = [];
+    private List<EpisodeDetails> SelectedEpisodes => EpisodesBySeason.GetValueOrDefault(SelectedSeasonNumber) ?? [];
+    private IEnumerable<EpisodeDetails> AllEpisodes => EpisodesBySeason.Values.SelectMany(items => items).OrderBy(item => item.SeasonNumber).ThenBy(item => item.EpisodeNumber);
+    private WatchProgressEntry? CurrentEpisodeProgress => EpisodeProgress.Where(item => !item.IsCompleted).OrderByDescending(item => item.UpdatedAt).FirstOrDefault();
+    private bool HasEpisodeInProgress => CurrentEpisodeProgress is not null;
+    private string PlayButtonLabel => NextEpisodeToPlay is { } episode
+        ? $"{(HasEpisodeInProgress ? "Reprendre" : "Lecture")} · S{episode.SeasonNumber:00}E{episode.EpisodeNumber:00}"
+        : "Série terminée";
+    private EpisodeDetails? NextEpisodeToPlay =>
+        (CurrentEpisodeProgress is { } current ? AllEpisodes.FirstOrDefault(episode => episode.SeasonNumber == current.SeasonNumber && episode.EpisodeNumber == current.EpisodeNumber) : null)
+        ?? AllEpisodes.FirstOrDefault(episode => episode.SeasonNumber > 0 && !IsWatched(episode));
+    private string CatalogUrl => MediaType == "tv" ? "/series" : "/films";
+    private string BackdropStyle => string.IsNullOrWhiteSpace(Details?.Backdrop) ? "" : $"background-image: linear-gradient(90deg,#090a0e 0%,rgba(9,10,14,.9) 32%,rgba(9,10,14,.22) 78%),linear-gradient(0deg,#090a0e 0%,transparent 58%),url('{Details.Backdrop}')";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        IsLoading = true;
+        ErrorMessage = null;
+        Details = null;
+        EpisodesBySeason = [];
+        EpisodeProgress = [];
+        try
+        {
+            var type = MediaType == "tv" ? "tv" : "movie";
+            var response = await Http.GetAsync($"/api/catalog/{type}/{TmdbId}");
+            if (!response.IsSuccessStatusCode) ErrorMessage = "TMDB n’a pas fourni de fiche pour ce média.";
+            else
+            {
+                Details = await response.Content.ReadFromJsonAsync<MediaDetails>();
+                if (type == "tv" && Details is not null) await LoadEpisodesAsync();
+            }
+        }
+        catch (HttpRequestException) { ErrorMessage = "Impossible de joindre TMDB."; }
+        finally { IsLoading = false; }
+    }
+
+    private Task PlayAsync()
+    {
+        if (MediaType != "tv")
+        {
+            Navigation.NavigateTo($"/lecture/movie/{TmdbId}");
+            return Task.CompletedTask;
+        }
+        var episode = NextEpisodeToPlay;
+        if (episode is not null) PlayEpisode(episode);
+        return Task.CompletedTask;
+    }
+
+    private async Task LoadEpisodesAsync()
+    {
+        var seasons = Details!.Seasons.Where(season => season.EpisodeCount > 0).OrderBy(season => season.SeasonNumber).ToArray();
+        EpisodeProgress = (await ProgressStore.GetEpisodesAsync(TmdbId)).ToList();
+        if (seasons.Length == 0) return;
+        var loaded = await Task.WhenAll(seasons.Select(async season =>
+        {
+            try
+            {
+                var data = await Http.GetFromJsonAsync<SeasonEpisodesResponse>($"/api/catalog/tv/{TmdbId}/season/{season.SeasonNumber}");
+                return (season.SeasonNumber, Episodes: data?.Episodes ?? []);
+            }
+            catch (HttpRequestException) { return (season.SeasonNumber, Episodes: new List<EpisodeDetails>()); }
+        }));
+        EpisodesBySeason = loaded.ToDictionary(item => item.SeasonNumber, item => item.Episodes.OrderBy(episode => episode.EpisodeNumber).ToList());
+        SelectedSeasonNumber = CurrentEpisodeProgress?.SeasonNumber
+            ?? seasons.FirstOrDefault(season => season.SeasonNumber > 0 && !EpisodesBySeason.GetValueOrDefault(season.SeasonNumber, []).All(IsWatched))?.SeasonNumber
+            ?? seasons.First().SeasonNumber;
+    }
+
+    private void SelectSeason(int seasonNumber) => SelectedSeasonNumber = seasonNumber;
+
+    private WatchProgressEntry? FindProgress(EpisodeDetails episode) => EpisodeProgress.FirstOrDefault(item =>
+        item.SeasonNumber == episode.SeasonNumber && item.EpisodeNumber == episode.EpisodeNumber);
+
+    private bool IsWatched(EpisodeDetails episode) => FindProgress(episode)?.IsCompleted == true;
+
+    private void PlayEpisode(EpisodeDetails episode)
+    {
+        var query = $"seasonNumber={episode.SeasonNumber}&episodeNumber={episode.EpisodeNumber}&episodeTitle={Uri.EscapeDataString(episode.Title ?? "")}";
+        Navigation.NavigateTo($"/lecture/tv/{TmdbId}?{query}");
+    }
+
+    private static string FormatRuntime(int minutes) => minutes >= 60 ? $"{minutes / 60} h {minutes % 60:00}" : $"{minutes} min";
+    private static string FormatAirDate(string date) => DateTime.TryParse(date, out var parsed) ? parsed.ToString("d MMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("fr-FR")) : date;
+
+    private sealed record MediaDetails(int Id, string Title, string? Overview, string? Poster, string? Backdrop,
+        string MediaType, double Rating, string? OriginalLanguage, int? Year, List<string> Genres,
+        int? RuntimeMinutes, int? SeasonCount, int? EpisodeCount, List<SeasonSummary> Seasons, string? TrailerUrl);
+    private sealed record SeasonSummary(int SeasonNumber, string Name, int EpisodeCount, string? Poster);
+    private sealed record SeasonEpisodesResponse(int SeasonNumber, List<EpisodeDetails> Episodes);
+    private sealed record EpisodeDetails(int Id, int SeasonNumber, int EpisodeNumber, string? Title, string? Overview, string? Still, string? AirDate, int? RuntimeMinutes);
+}

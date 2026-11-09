@@ -1,0 +1,492 @@
+@page "/"
+@page "/films"
+@page "/series"
+@using System.Globalization
+@implements IAsyncDisposable
+@inject HttpClient Http
+@inject NavigationManager Navigation
+@inject WatchProgressStore ProgressStore
+@inject IJSRuntime JS
+<PageTitle>Écran — @CatalogPageTitle</PageTitle>
+
+<section class="hero" id="accueil" style="@HeroStyle">
+    <div class="hero-shade"></div>
+    <div class="hero-copy">
+        <div class="eyebrow"><span class="spark">✦</span> @HeroEyebrow</div>
+        <h1>@(Featured?.Title ?? "Vos histoires, en grand.")</h1>
+        <p>@(Featured?.Overview ?? "Découvrez les films et séries du moment, puis lancez la lecture depuis votre bibliothèque personnelle.")</p>
+        <div class="hero-actions">
+            @if (Featured is not null)
+            {
+                <button class="button button-light" @onclick="() => SelectFeature(Featured)">▶ <span>Lecture</span></button>
+                <a class="button button-glass" href="@($"/infos/{Featured.MediaType ?? "movie"}/{Featured.Id}")">ⓘ <span>Plus d’infos</span></a>
+            }
+        </div>
+    </div>
+    <div class="hero-pagination" aria-label="À la une">
+        @for (var index = 0; index < HeroItems.Count; index++)
+        {
+            var slideIndex = index;
+            <button type="button" class="@(slideIndex == heroIndex ? "active" : null)" aria-label="Afficher @HeroItems[slideIndex].Title" aria-current="@(slideIndex == heroIndex ? "true" : null)" @onclick="() => SelectHero(slideIndex)"></button>
+        }
+    </div>
+</section>
+
+<div class="content-wrap">
+    <div class="status-line"><span class="live-dot"></span>@StatusMessage</div>
+
+    @if (ActiveCatalog == "all" && ContinueWatching.Count > 0)
+    {
+        <section class="section watching-section" aria-labelledby="watching-title">
+            <div class="section-heading"><div><div class="eyebrow">À REPRENDRE</div><h2 id="watching-title">Reprendre la lecture</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(WatchingCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(WatchingCarousel, 1)">›</button></div></div>
+            <div class="watching-row" @ref="WatchingCarousel">
+                @foreach (var item in ContinueWatching)
+                {
+                    <a class="watching-card" href="@BuildResumeUrl(item)" @key="@(item.MediaType + "-" + item.TmdbId + "-" + item.SeasonNumber + "-" + item.EpisodeNumber)">
+                        <div class="watching-art">
+                            @if (!string.IsNullOrWhiteSpace(item.PosterUrl) && !UnavailablePosters.Contains(ProgressKey(item)))
+                            {
+                                <img src="@item.PosterUrl" alt="Affiche de @item.Title" loading="lazy" @onerror="() => MarkPosterUnavailable(item)" />
+                            }
+                            @if (string.IsNullOrWhiteSpace(item.PosterUrl) || UnavailablePosters.Contains(ProgressKey(item)))
+                            {
+                                <span class="watching-fallback-title">@item.Title</span>
+                            }
+                            <span class="watching-play">▶</span><span class="watching-kind">@(item.MediaType == "tv" ? "SÉRIE" : "FILM")</span>
+                        </div>
+                        <strong>@item.Title</strong>
+                        <div class="watching-progress" role="progressbar" aria-label="Progression de @item.Title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@item.ProgressPercent.ToString("0.##", CultureInfo.InvariantCulture)"><span style="width:@(Math.Clamp(item.ProgressPercent, 0, 100).ToString("0.##", CultureInfo.InvariantCulture))%; max-width:100%"></span></div>
+                        <small>@FormatWatchTime(item.CurrentTimeSeconds) / @FormatWatchTime(item.DurationSeconds)</small>
+                    </a>
+                }
+            </div>
+        </section>
+    }
+
+    <section id="catalogue" class="section">
+        <div class="section-heading"><div><div class="eyebrow">CHOISI POUR VOUS</div><h2>@CatalogSectionTitle</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(CatalogCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(CatalogCarousel, 1)">›</button></div></div>
+        @if (!string.IsNullOrWhiteSpace(CatalogError)) { <div class="inline-message error">@CatalogError</div> }
+        @if (VisibleMedia.Count == 0)
+        {
+            <div class="empty-state"><span class="empty-icon">✦</span><strong>@(IsLoading ? "Chargement du catalogue…" : "Le catalogue TMDB n’est pas configuré")</strong><p>@(IsLoading ? "Les tendances arrivent dans un instant." : "Ajoutez votre jeton TMDB dans les secrets de développement pour afficher les films et séries.")</p></div>
+        }
+        else
+        {
+            <div class="poster-carousel" @ref="CatalogCarousel">
+                @foreach (var item in VisibleMedia)
+                {
+                    <div class="poster-card" @key="@(item.MediaType + "-" + item.Id)">
+                        <button class="poster-select" @onclick="() => SelectFeature(item)" aria-label="Lire @item.Title">
+                        <div class="poster-art">
+                            @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
+                            else { <div class="poster-placeholder">@item.Title</div> }
+                            <span class="rating">★ @item.Rating.ToString("0.0")</span>
+                            <span class="poster-play">▶</span>
+                        </div>
+                        <span class="poster-title">@item.Title</span><span class="poster-type">@(item.MediaType == "tv" ? "Série" : "Film")</span>
+                        </button>
+                        <a class="poster-info-button" href="@($"/infos/{item.MediaType ?? "movie"}/{item.Id}")">ⓘ Plus d’infos</a>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+
+    @if (!IsSearching && VisibleIndexerPopular.Count > 0)
+    {
+        <section class="section genre-section" aria-label="Médias populaires dans les indexeurs">
+            <div class="section-heading"><div><div class="eyebrow">SOURCES CONFIGURÉES · ACTUALISÉES TOUTES LES @IndexerPopularityRefreshHours HEURES</div><h2>Populaires dans vos indexeurs</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(IndexerPopularCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(IndexerPopularCarousel, 1)">›</button></div></div>
+            @if (IndexerPopularityLastUpdated is not null) { <div class="status-line">Cache mis à jour le @IndexerPopularityLastUpdated.Value.ToLocalTime().ToString("g")</div> }
+            <div class="poster-carousel" @ref="IndexerPopularCarousel">
+                @foreach (var item in VisibleIndexerPopular)
+                {
+                    <div class="poster-card" @key="@(item.MediaType + "-" + item.Id)">
+                        <button class="poster-select" @onclick="() => SelectIndexerPopular(item)" aria-label="Lire @item.Title">
+                            <div class="poster-art">
+                                @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
+                                else { <div class="poster-placeholder">@item.Title</div> }
+                                <span class="rating">★ @item.Rating.ToString("0.0")</span><span class="poster-play">▶</span>
+                            </div>
+                            <span class="poster-title">@item.Title</span><span class="poster-type">@item.AvailableSources source(s) · @item.Seeders pairs</span>
+                        </button>
+                        <a class="poster-info-button" href="@($"/infos/{item.MediaType}/{item.Id}")">ⓘ Plus d’infos</a>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+
+    @if (!IsSearching)
+    {
+        @foreach (var row in GenreRows.Where(row => row.Media.Count > 0))
+        {
+            <section class="section genre-section" @key="row.Name" aria-label="@row.Name">
+                <div class="section-heading"><div><div class="eyebrow">LES PLUS POPULAIRES</div><h2>@row.Name</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(row.Carousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(row.Carousel, 1)">›</button></div></div>
+                <div class="poster-carousel" @ref="row.Carousel">
+                    @foreach (var item in row.Media)
+                    {
+                        <div class="poster-card" @key="@(item.MediaType + "-" + item.Id)">
+                            <button class="poster-select" @onclick="() => SelectFeature(item)" aria-label="Lire @item.Title">
+                            <div class="poster-art">
+                                @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
+                                else { <div class="poster-placeholder">@item.Title</div> }
+                                <span class="rating">★ @item.Rating.ToString("0.0")</span><span class="poster-play">▶</span>
+                            </div>
+                            <span class="poster-title">@item.Title</span><span class="poster-type">@(item.MediaType == "tv" ? "Série" : "Film")</span>
+                            </button>
+                            <a class="poster-info-button" href="@($"/infos/{item.MediaType ?? "movie"}/{item.Id}")">ⓘ Plus d’infos</a>
+                        </div>
+                    }
+                </div>
+            </section>
+        }
+    }
+
+</div>
+
+@code {
+    private List<MediaItem> Movies = [];
+    private List<WatchProgressEntry> ContinueWatching = [];
+    private readonly HashSet<string> UnavailablePosters = new(StringComparer.OrdinalIgnoreCase);
+    private ElementReference WatchingCarousel;
+    private ElementReference CatalogCarousel;
+    private ElementReference IndexerPopularCarousel;
+    private IJSObjectReference? carouselModule;
+    private Timer? heroRotationTimer;
+    private int heroIndex;
+    private List<GenreRow> GenreRows = [];
+    private MediaItem? Featured;
+    private bool IsLoading = true;
+    private bool IsSearching;
+    private string? CatalogError;
+    private string? lastLoadedQuery;
+    private string? lastGenreScope;
+    private int genreLoadVersion;
+    private bool hasLoadedCatalog;
+    private bool hasLoadedIndexerPopular;
+    private List<IndexerPopularItem> IndexerPopular = [];
+    private DateTimeOffset? IndexerPopularityLastUpdated;
+    private int IndexerPopularityRefreshHours = 8;
+    private List<IndexerPopularItem> VisibleIndexerPopular => ActiveCatalog switch
+    {
+        "films" => IndexerPopular.Where(item => item.MediaType == "movie").ToList(),
+        "series" => IndexerPopular.Where(item => item.MediaType == "tv").ToList(),
+        _ => IndexerPopular
+    };
+    [SupplyParameterFromQuery(Name = "query")] public string? SearchQuery { get; set; }
+    private string ActiveCatalog
+    {
+        get
+        {
+            var path = Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
+            return path.Equals("films", StringComparison.OrdinalIgnoreCase) ? "films"
+                : path.Equals("series", StringComparison.OrdinalIgnoreCase) ? "series" : "all";
+        }
+    }
+    private string CatalogPageTitle => ActiveCatalog switch { "films" => "Films", "series" => "Séries", _ => "Films et séries" };
+    private string CatalogSectionTitle => IsSearching ? "Résultats de recherche"
+        : ActiveCatalog == "films" ? "Films du moment"
+        : ActiveCatalog == "series" ? "Séries du moment" : "Tendances du moment";
+    private List<MediaItem> VisibleMedia => ActiveCatalog switch
+    {
+        "films" => Movies.Where(item => string.Equals(item.MediaType, "movie", StringComparison.OrdinalIgnoreCase)).ToList(),
+        "series" => Movies.Where(item => string.Equals(item.MediaType, "tv", StringComparison.OrdinalIgnoreCase)).ToList(),
+        _ => Movies
+    };
+    private List<MediaItem> HeroItems => IsSearching ? [] : VisibleMedia.Take(4).ToList();
+    private string StatusMessage => CatalogError ?? (Movies.Count > 0 ? "Le meilleur du moment, sélectionné pour vous" : "Votre espace cinéma personnel");
+    private string HeroEyebrow => Featured is null ? "VOTRE CINÉMA, À LA MAISON" : $"À LA UNE · {(Featured.MediaType == "tv" ? "SÉRIE" : "FILM").ToUpperInvariant()}";
+    private string HeroStyle => string.IsNullOrWhiteSpace(Featured?.Backdrop) ? "" : $"background-image: linear-gradient(90deg, #090a0e 0%, rgba(9,10,14,.88) 32%, rgba(9,10,14,.22) 74%), linear-gradient(0deg, #090a0e 0%, transparent 58%), url('{Featured.Backdrop}')";
+
+    protected override void OnInitialized() => Navigation.LocationChanged += HandleLocationChanged;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        try
+        {
+            ContinueWatching = (await ProgressStore.GetAllAsync()).ToList();
+            await LoadMissingPostersAsync();
+        }
+        catch (IOException) { ContinueWatching = []; }
+        var query = string.IsNullOrWhiteSpace(SearchQuery) ? null : SearchQuery.Trim();
+        var queryChanged = !string.Equals(lastLoadedQuery, query, StringComparison.Ordinal);
+        if (!hasLoadedCatalog || !string.Equals(lastLoadedQuery, query, StringComparison.Ordinal))
+        {
+            hasLoadedCatalog = true;
+            lastLoadedQuery = query;
+            await LoadCatalogAsync(query);
+        }
+        if (!hasLoadedIndexerPopular)
+        {
+            hasLoadedIndexerPopular = true;
+            await LoadIndexerPopularityAsync();
+        }
+        UpdateFeaturedForCurrentTab();
+        if (!string.Equals(lastGenreScope, ActiveCatalog, StringComparison.Ordinal) || queryChanged)
+        {
+            lastGenreScope = ActiveCatalog;
+            _ = LoadGenreRowsAsync(ActiveCatalog, query);
+        }
+    }
+
+    private void HandleLocationChanged(object? sender, LocationChangedEventArgs args)
+    {
+        _ = InvokeAsync(async () =>
+        {
+            var query = ReadSearchQuery(args.Location);
+            var queryChanged = !string.Equals(lastLoadedQuery, query, StringComparison.Ordinal);
+            if (!hasLoadedCatalog || !string.Equals(lastLoadedQuery, query, StringComparison.Ordinal))
+            {
+                hasLoadedCatalog = true;
+                lastLoadedQuery = query;
+                await LoadCatalogAsync(query);
+            }
+            UpdateFeaturedForCurrentTab();
+            if (!string.Equals(lastGenreScope, ActiveCatalog, StringComparison.Ordinal) || queryChanged)
+            {
+                lastGenreScope = ActiveCatalog;
+                _ = LoadGenreRowsAsync(ActiveCatalog, query);
+            }
+            StateHasChanged();
+        });
+    }
+
+    private static string? ReadSearchQuery(string location)
+    {
+        var queryString = new Uri(location).Query;
+        foreach (var pair in queryString.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var parts = pair.Split('=', 2);
+            if (string.Equals(Uri.UnescapeDataString(parts[0].Replace('+', ' ')), "query", StringComparison.OrdinalIgnoreCase))
+            {
+                var value = parts.Length > 1 ? Uri.UnescapeDataString(parts[1].Replace('+', ' ')).Trim() : "";
+                return string.IsNullOrWhiteSpace(value) ? null : value;
+            }
+        }
+        return null;
+    }
+
+    private static string FormatWatchTime(double seconds)
+    {
+        var time = TimeSpan.FromSeconds(Math.Max(0, seconds));
+        return time.TotalHours >= 1 ? $"{(int)time.TotalHours}:{time.Minutes:00}:{time.Seconds:00}" : $"{time.Minutes}:{time.Seconds:00}";
+    }
+
+    private static string ProgressKey(WatchProgressEntry item) => $"{item.MediaType}-{item.TmdbId}";
+
+    private static string BuildResumeUrl(WatchProgressEntry item)
+    {
+        var url = $"/lecture/{item.MediaType}/{item.TmdbId}?position={item.CurrentTimeSeconds:0.###}";
+        return item.SeasonNumber is not null && item.EpisodeNumber is not null
+            ? $"{url}&seasonNumber={item.SeasonNumber}&episodeNumber={item.EpisodeNumber}"
+            : url;
+    }
+
+    private void MarkPosterUnavailable(WatchProgressEntry item) => UnavailablePosters.Add(ProgressKey(item));
+
+    private async Task LoadMissingPostersAsync()
+    {
+        var needsPoster = ContinueWatching.Where(item => string.IsNullOrWhiteSpace(item.PosterUrl)).ToArray();
+        if (needsPoster.Length == 0) return;
+        await Task.WhenAll(needsPoster.Select(async item =>
+        {
+            try
+            {
+                var details = await Http.GetFromJsonAsync<WatchPosterResponse>($"/api/catalog/{item.MediaType}/{item.TmdbId}");
+                if (!string.IsNullOrWhiteSpace(details?.Poster))
+                {
+                    await ProgressStore.SetPosterAsync(item.TmdbId, item.MediaType, details.Poster, item.SeasonNumber, item.EpisodeNumber);
+                    var index = ContinueWatching.FindIndex(entry => entry.TmdbId == item.TmdbId && entry.MediaType == item.MediaType);
+                    if (index >= 0) ContinueWatching[index] = ContinueWatching[index] with { PosterUrl = details.Poster };
+                }
+            }
+            catch (HttpRequestException) { }
+        }));
+    }
+
+    private async Task ScrollCarouselAsync(ElementReference element, int direction)
+    {
+        try
+        {
+            carouselModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/carousel.js");
+            await carouselModule.InvokeVoidAsync("scroll", element, direction);
+        }
+        catch (JSDisconnectedException) { }
+    }
+
+    private async Task LoadGenreRowsAsync(string scope, string? query)
+    {
+        var version = Interlocked.Increment(ref genreLoadVersion);
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            GenreRows = [];
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        var isHome = scope == "all";
+        var definitions = GenreDefinitions.Where(genre => isHome
+            ? genre.MovieId.HasValue || genre.TvId.HasValue
+            : scope == "films" ? genre.MovieId.HasValue : genre.TvId.HasValue).ToArray();
+        var rows = await Task.WhenAll(definitions.Select(async genre =>
+        {
+            var requests = new List<Task<List<MediaItem>>>();
+            if ((isHome || scope == "films") && genre.MovieId is int movieGenre)
+                requests.Add(LoadGenreMediaAsync("movie", movieGenre));
+            if ((isHome || scope == "series") && genre.TvId is int tvGenre)
+                requests.Add(LoadGenreMediaAsync("tv", tvGenre));
+            var media = (await Task.WhenAll(requests)).SelectMany(items => items)
+                .DistinctBy(item => $"{item.MediaType}-{item.Id}", StringComparer.OrdinalIgnoreCase)
+                .OrderByDescending(item => item.Popularity)
+                .Take(20)
+                .ToList();
+            return new GenreRow(genre.Name, media);
+        }));
+
+        if (version != Volatile.Read(ref genreLoadVersion)) return;
+        GenreRows = rows.ToList();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task<List<MediaItem>> LoadGenreMediaAsync(string mediaType, int genreId)
+    {
+        try
+        {
+            var result = await Http.GetFromJsonAsync<CatalogResponse>($"/api/catalog/genre/{mediaType}/{genreId}");
+            return result?.Results ?? [];
+        }
+        catch (HttpRequestException) { return []; }
+    }
+
+    private async Task LoadCatalogAsync(string? query = null)
+    {
+        IsLoading = true;
+        CatalogError = null;
+        try
+        {
+            var url = "/api/catalog" + (string.IsNullOrWhiteSpace(query) ? "" : "?query=" + Uri.EscapeDataString(query));
+            var response = await Http.GetFromJsonAsync<CatalogResponse>(url);
+            Movies = response?.Results ?? [];
+            IsSearching = !string.IsNullOrWhiteSpace(query);
+            var visible = VisibleMedia;
+            if (visible.Count > 0 && (Featured is null || !visible.Any(item => item.Id == Featured.Id && item.MediaType == Featured.MediaType)))
+                Featured = visible[0];
+            if (response is { Configured: false }) CatalogError = "Le secret TMDB n’est pas chargé. Lancez l’application en environnement Development.";
+        }
+        catch (HttpRequestException) { CatalogError = "Impossible de joindre le catalogue TMDB."; }
+        finally { IsLoading = false; }
+    }
+
+    private async Task LoadIndexerPopularityAsync()
+    {
+        try
+        {
+            var snapshot = await Http.GetFromJsonAsync<IndexerPopularityResponse>("/api/catalog/indexer-popular");
+            if (snapshot is not null)
+            {
+                IndexerPopular = snapshot.Results;
+                IndexerPopularityLastUpdated = snapshot.LastUpdated;
+                IndexerPopularityRefreshHours = (int)Math.Round(snapshot.RefreshIntervalHours);
+                if (snapshot.IsRefreshing && IndexerPopular.Count == 0)
+                {
+                    for (var attempt = 0; attempt < 4 && IndexerPopular.Count == 0; attempt++)
+                    {
+                        await Task.Delay(TimeSpan.FromSeconds(3));
+                        snapshot = await Http.GetFromJsonAsync<IndexerPopularityResponse>("/api/catalog/indexer-popular");
+                        if (snapshot is null) break;
+                        IndexerPopular = snapshot.Results;
+                        IndexerPopularityLastUpdated = snapshot.LastUpdated;
+                    }
+                }
+            }
+        }
+        catch (HttpRequestException) { }
+    }
+
+    private Task SelectIndexerPopular(IndexerPopularItem item) => SelectFeature(new MediaItem(item.Id, item.Title, item.Overview,
+        item.Poster, item.Backdrop, item.MediaType, item.Rating, item.OriginalLanguage, item.Year, item.TmdbPopularity));
+
+    private void UpdateFeaturedForCurrentTab()
+    {
+        var items = HeroItems;
+        if (items.Count == 0)
+        {
+            heroRotationTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            return;
+        }
+        var index = items.FindIndex(item => Featured is not null && item.Id == Featured.Id && item.MediaType == Featured.MediaType);
+        heroIndex = index < 0 ? 0 : index;
+        Featured = items[heroIndex];
+        if (items.Count > 1 && ActiveCatalog == "all")
+        {
+            heroRotationTimer ??= new Timer(_ => _ = InvokeAsync(RotateFeatured), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+            heroRotationTimer.Change(TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(8));
+        }
+        else
+        {
+            heroRotationTimer?.Change(Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+        }
+    }
+
+    private void RotateFeatured()
+    {
+        var items = HeroItems;
+        if (items.Count < 2) return;
+        heroIndex = (heroIndex + 1) % items.Count;
+        Featured = items[heroIndex];
+        StateHasChanged();
+    }
+
+    private void SelectHero(int index)
+    {
+        if (index < 0 || index >= HeroItems.Count) return;
+        heroIndex = index;
+        Featured = HeroItems[index];
+    }
+
+    private Task SelectFeature(MediaItem item)
+    {
+        var type = item.MediaType ?? "movie";
+        Navigation.NavigateTo($"/lecture/{type}/{item.Id}");
+        return Task.CompletedTask;
+    }
+
+    private sealed record CatalogResponse(bool Configured, List<MediaItem> Results);
+    private sealed record IndexerPopularityResponse(List<IndexerPopularItem> Results, DateTimeOffset? LastUpdated, bool IsRefreshing,
+        string? Error, double RefreshIntervalHours);
+    private sealed record IndexerPopularItem(int Id, string MediaType, string Title, string? OriginalTitle, string? Overview,
+        string? Poster, string? Backdrop, string? OriginalLanguage, int? Year, double Rating, double TmdbPopularity,
+        int AvailableSources, int Seeders, int Grabs, long PopularityScore, string[] IndexerNames);
+    private sealed record WatchPosterResponse(string? Poster);
+    private sealed record MediaItem(int Id, string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, string? OriginalLanguage, int? Year, double Popularity = 0);
+    private sealed record GenreDefinition(string Name, int? MovieId, int? TvId);
+    private sealed class GenreRow(string name, List<MediaItem> media)
+    {
+        public string Name { get; } = name;
+        public List<MediaItem> Media { get; } = media;
+        public ElementReference Carousel { get; set; }
+    }
+    private static readonly GenreDefinition[] GenreDefinitions =
+    [
+        new("Action & aventure", 28, 10759), new("Animation", 16, 16), new("Comédie", 35, 35),
+        new("Crime", 80, 80), new("Documentaire", 99, 99), new("Drame", 18, 18),
+        new("Familial", 10751, 10751), new("Science-fiction & fantastique", 878, 10765),
+        new("Histoire", 36, null), new("Horreur", 27, null), new("Mystère", 9648, 9648),
+        new("Romance", 10749, null), new("Thriller", 53, null), new("Guerre & politique", 10752, 10768),
+        new("Western", 37, 37), new("Jeunesse", null, 10762), new("Réalité", null, 10764),
+        new("Soap", null, 10766), new("Talk-show", null, 10767)
+    ];
+
+    public async ValueTask DisposeAsync()
+    {
+        Interlocked.Increment(ref genreLoadVersion);
+        Navigation.LocationChanged -= HandleLocationChanged;
+        heroRotationTimer?.Dispose();
+        if (carouselModule is not null)
+        {
+            try { await carouselModule.DisposeAsync(); }
+            catch (JSDisconnectedException) { }
+        }
+    }
+}
+
