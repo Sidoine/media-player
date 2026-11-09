@@ -1,0 +1,12 @@
+{
+  "name": "media-player-playwright",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "dotnet build ../../src/MediaPlayer.Web/MediaPlayer.Web.csproj && playwright test",
+    "test:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.65.0"
+  }
+}

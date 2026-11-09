@@ -6,6 +6,10 @@
 /data/
 /config/
 /config/media-player/
+**/node_modules/
+**/playwright-report/
+**/test-results/
+tests/MediaPlayer.Playwright/.cache/
 .env
 .env.*
 *.user

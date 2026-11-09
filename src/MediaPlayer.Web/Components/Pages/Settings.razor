@@ -1,13 +1,34 @@
 @page "/configuration"
+@using System.Text.Json
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 <PageTitle>Configuration · Écran</PageTitle>
 
 <div class="settings-page">
     <a class="back-link" href="/">← Retour au catalogue</a>
     <div class="settings-title"><div class="eyebrow">PRÉFÉRENCES</div><h1>Configuration</h1><p>Gérez les sources de recherche de votre espace cinéma.</p></div>
 
-    <section class="settings-panel">
+    <div class="settings-layout">
+    <nav class="settings-nav" aria-label="Sections de configuration">
+        <button type="button" data-section="dashboard" class="active" aria-current="location">Tableau de bord</button>
+        <button type="button" data-section="api-keys">Clés API</button>
+        <button type="button" data-section="torznab-sources">Sources Torznab</button>
+        <button type="button" data-section="bittorrent-trackers">Trackers BitTorrent</button>
+        <button type="button" data-section="cardigann-sources">Choisir une définition</button>
+        <button type="button" data-section="definitions-cache">Définitions d’indexeurs</button>
+        <button type="button" data-section="source-search">Tester les sources</button>
+    </nav>
+    <div class="settings-content">
+    <section class="settings-panel indexer-dashboard" id="dashboard" aria-labelledby="indexer-dashboard-title">
+        <div class="panel-heading"><div><div class="eyebrow">SYNCHRONISATION ET ÉTAT</div><h2 id="indexer-dashboard-title">Tableau de bord</h2></div></div>
+        <div class="indexer-dashboard-grid">
+            <article class="dashboard-card"><span class="eyebrow">SOURCES</span><strong>@(Sources.Count + SelectedIndexers.Count)</strong><span>@Sources.Count Torznab · @SelectedIndexers.Count Cardigann</span></article>
+            <article class="dashboard-card"><span class="eyebrow">POPULARITÉ DES INDEXEURS</span><strong>@(PopularityStatus?.Results.Count ?? 0) médias en cache</strong><span>@PopularityLastUpdatedLabel</span><span>Actualisation automatique toutes les @PopularityRefreshHours heures</span></article>
+            <article class="dashboard-card"><span class="eyebrow">DÉFINITIONS CARDIGANN</span><strong>@(CacheStatus is { Available: true } ? $"{CacheStatus.DefinitionCount} définitions en cache" : "Cache indisponible")</strong><span>@DefinitionCacheUpdatedLabel</span></article>
+        </div>
+    </section>
+    <section class="settings-panel" id="api-keys">
         <div class="panel-heading"><div><div class="eyebrow">ACCÈS AUX SERVICES</div><h2>Clés API</h2></div></div>
         <p class="section-intro">Renseignez les clés TMDB et OpenSubtitles. Elles sont enregistrées localement de façon protégée. Les secrets .NET et variables d’environnement restent prioritaires.</p>
         <form class="source-form settings-source-form" @onsubmit="SaveApiCredentialsAsync" @onsubmit:preventDefault>
@@ -19,7 +40,7 @@
         @if (!string.IsNullOrWhiteSpace(CredentialMessage)) { <div class="inline-message">@CredentialMessage</div> }
     </section>
 
-    <section class="settings-panel">
+    <section class="settings-panel" id="torznab-sources">
         <div class="panel-heading"><div><div class="eyebrow">INDEXEURS PERSONNELS</div><h2>Sources Torznab</h2></div><span class="source-count">@Sources.Count source(s)</span></div>
         <p class="section-intro">Ajoutez les URL API et clés de vos indexeurs Torznab compatibles. Une attestation de droits est requise pour chaque source.</p>
         <form class="source-form settings-source-form" @onsubmit="AddSourceAsync" @onsubmit:preventDefault>
@@ -49,7 +70,7 @@
         @if (!string.IsNullOrWhiteSpace(TrackerMessage)) { <div class="inline-message">@TrackerMessage</div> }
     </section>
 
-    <section class="settings-panel definition-panel">
+    <section class="settings-panel definition-panel" id="cardigann-sources">
         <div class="panel-heading"><div><div class="eyebrow">CATALOGUE INTÉGRÉ</div><h2>Choisir une définition</h2></div><span class="source-count">@SelectedIndexers.Count sélectionnée(s)</span></div>
         <p class="section-intro">Choisissez un indexeur dans les définitions téléchargées depuis GitHub. La recherche Cardigann prend actuellement en charge les définitions à réponse JSON; les paramètres de compte et les réponses HTML/XML ne sont pas encore pris en charge.</p>
         <form class="definition-picker" @onsubmit="SearchDefinitionsAsync" @onsubmit:preventDefault>
@@ -77,7 +98,7 @@
         </div>
     </section>
 
-    <section class="settings-panel cache-panel">
+    <section class="settings-panel cache-panel" id="definitions-cache">
         <div class="panel-heading"><div><div class="eyebrow">SYNCHRONISATION LOCALE</div><h2>Définitions d’indexeurs</h2></div><button class="text-button" disabled="@CacheBusy" @onclick="RefreshDefinitionsAsync">@(CacheBusy ? "Synchronisation…" : "Actualiser ↻")</button></div>
         <p class="section-intro">Les définitions Cardigann v11 sont conservées dans le cache local et synchronisées au plus une fois par semaine.</p>
         @if (CacheStatus is null)
@@ -86,7 +107,7 @@
         }
         else if (CacheStatus.Available)
         {
-            <div class="cache-status"><span class="cache-led"></span><strong>@CacheStatus.DefinitionCount définitions en cache</strong><span>Version @CacheStatus.DefinitionVersion</span><span> @if (CacheStatus.FetchedAtUtc is not null) { <span>Synchronisées le @CacheStatus.FetchedAtUtc.Value.ToLocalTime().ToString("g")</span> }</span></div>
+            <div class="cache-status"><span class="cache-led"></span><strong>@CacheStatus.DefinitionCount définitions en cache</strong><span>Version @CacheStatus.DefinitionVersion</span></div>
         }
         else
         {
@@ -95,7 +116,7 @@
         @if (!string.IsNullOrWhiteSpace(CacheMessage)) { <div class="inline-message">@CacheMessage</div> }
     </section>
 
-    <section class="settings-panel search-panel">
+    <section class="settings-panel search-panel" id="source-search">
         <div class="panel-heading"><div><div class="eyebrow">RECHERCHE FÉDÉRÉE</div><h2>Tester les sources</h2></div></div>
         <p class="section-intro">La recherche interroge vos catalogues Torznab et les définitions Cardigann sélectionnées.</p>
         <form class="torrent-search" @onsubmit="SearchTorznabAsync" @onsubmit:preventDefault>
@@ -119,9 +140,13 @@
     </section>
 
     <p class="rights-note">L’attestation de droits est fournie par l’utilisateur et n’est pas une vérification indépendante des licences du catalogue.</p>
+    </div>
+    </div>
 </div>
 
 @code {
+    private bool _settingsNavigationInitialized;
+
     private List<SourceItem> Sources = [];
     private List<DefinitionItem> Definitions = [];
     private List<SelectedIndexerItem> SelectedIndexers = [];
@@ -144,6 +169,7 @@
     private bool IsSavingCredentials;
     private bool CacheBusy;
     private IndexerDefinitionCacheStatus? CacheStatus;
+    private PopularityStatusResponse? PopularityStatus;
     private string? SourceMessage;
     private string? SearchMessage;
     private string? CacheMessage;
@@ -152,13 +178,34 @@
     private string? CredentialMessage;
     private CredentialStatusResponse? CredentialStatus;
     private string DefinitionCountText => CacheStatus is { DefinitionCount: > 0 } ? CacheStatus.DefinitionCount.ToString() : "les définitions disponibles";
+    private string PopularityLastUpdatedLabel => PopularityStatus?.LastUpdated is { } updated
+        ? $"Dernière mise à jour : {updated.ToLocalTime():g}"
+        : PopularityStatus?.IsRefreshing == true ? "Synchronisation en cours…" : "En attente de la première synchronisation";
+    private string DefinitionCacheUpdatedLabel => CacheStatus?.FetchedAtUtc is { } fetched
+        ? $"Dernière synchronisation : {fetched.ToLocalTime():g}" : "Pas encore synchronisé";
+    private int PopularityRefreshHours => PopularityStatus is null ? 8 : (int)Math.Round(PopularityStatus.RefreshIntervalHours);
 
-    protected override Task OnAfterRenderAsync(bool firstRender) => firstRender ? LoadAndRenderAsync() : Task.CompletedTask;
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (!_settingsNavigationInitialized)
+        {
+            _settingsNavigationInitialized = true;
+            await JS.InvokeVoidAsync("mediaSettings.init");
+        }
+        await LoadAndRenderAsync();
+    }
 
     private async Task LoadAndRenderAsync()
     {
-        await Task.WhenAll(LoadSourcesAsync(), LoadCacheStatusAsync(), LoadSelectedIndexersAsync(), LoadDefinitionsAsync(), LoadTrackersAsync(), LoadCredentialStatusAsync());
+        await Task.WhenAll(LoadSourcesAsync(), LoadCacheStatusAsync(), LoadSelectedIndexersAsync(), LoadDefinitionsAsync(), LoadTrackersAsync(), LoadCredentialStatusAsync(), LoadPopularityStatusAsync());
         StateHasChanged();
+    }
+
+    private async Task LoadPopularityStatusAsync()
+    {
+        try { PopularityStatus = await Http.GetFromJsonAsync<PopularityStatusResponse>("/api/catalog/indexer-popular"); }
+        catch (HttpRequestException) { CacheMessage = "Impossible de lire l’état des indexeurs populaires."; }
     }
 
     private async Task LoadCredentialStatusAsync()
@@ -354,4 +401,5 @@
     private sealed record SelectedIndexerItem(Guid Id, string DefinitionId, string Name, bool RightsConfirmed, DateTimeOffset AddedAt);
     private sealed record TrackerListResponse(List<string> Urls);
     private sealed record CredentialStatusResponse(bool TmdbConfigured, string TmdbSource, bool OpenSubtitlesConfigured, string OpenSubtitlesSource, bool AllConfigured);
+    private sealed record PopularityStatusResponse(List<JsonElement> Results, DateTimeOffset? LastUpdated, bool IsRefreshing, string? Error, double RefreshIntervalHours);
 }

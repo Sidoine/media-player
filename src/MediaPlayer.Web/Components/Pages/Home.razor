@@ -4,14 +4,20 @@
 @using System.Globalization
 @implements IAsyncDisposable
 @inject HttpClient Http
+@inject IConfiguration Configuration
 @inject NavigationManager Navigation
 @inject WatchProgressStore ProgressStore
 @inject IJSRuntime JS
 <PageTitle>Écran — @CatalogPageTitle</PageTitle>
 
-<section class="hero" id="accueil" style="@HeroStyle">
+<section class="hero" id="accueil">
+    @if (PreviousFeatured is not null && IsHeroTransitioning)
+    {
+        <div class="hero-background hero-background-leaving" style="@HeroBackgroundStyle(PreviousFeatured)" aria-hidden="true"></div>
+    }
+    <div class="hero-background @(IsHeroTransitioning ? "hero-background-entering" : "")" style="@HeroBackgroundStyle(Featured)" aria-hidden="true"></div>
     <div class="hero-shade"></div>
-    <div class="hero-copy">
+    <div class="hero-copy @(IsHeroTransitioning ? "hero-copy-entering" : "")" @key="@(Featured is null ? "empty" : $"{Featured.MediaType}-{Featured.Id}")">
         <div class="eyebrow"><span class="spark">✦</span> @HeroEyebrow</div>
         <h1>@(Featured?.Title ?? "Vos histoires, en grand.")</h1>
         <p>@(Featured?.Overview ?? "Découvrez les films et séries du moment, puis lancez la lecture depuis votre bibliothèque personnelle.")</p>
@@ -55,9 +61,62 @@
                             <span class="watching-play">▶</span><span class="watching-kind">@(item.MediaType == "tv" ? "SÉRIE" : "FILM")</span>
                         </div>
                         <strong>@item.Title</strong>
+                        @if (item.MediaType == "tv" && item.SeasonNumber is not null && item.EpisodeNumber is not null)
+                        {
+                            <small class="watching-episode">Saison @item.SeasonNumber · Épisode @item.EpisodeNumber</small>
+                        }
                         <div class="watching-progress" role="progressbar" aria-label="Progression de @item.Title" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@item.ProgressPercent.ToString("0.##", CultureInfo.InvariantCulture)"><span style="width:@(Math.Clamp(item.ProgressPercent, 0, 100).ToString("0.##", CultureInfo.InvariantCulture))%; max-width:100%"></span></div>
                         <small>@FormatWatchTime(item.CurrentTimeSeconds) / @FormatWatchTime(item.DurationSeconds)</small>
                     </a>
+                }
+            </div>
+        </section>
+    }
+
+    @if (ActiveCatalog == "all" && UnwatchedDownloads.Count > 0)
+    {
+        <section class="section local-media-section" aria-label="Téléchargés et pas encore regardés">
+            <div class="section-heading"><div><div class="eyebrow">DANS VOTRE CACHE</div><h2>À regarder</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(DownloadedCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(DownloadedCarousel, 1)">›</button></div></div>
+            <div class="poster-carousel" @ref="DownloadedCarousel">
+                @foreach (var item in UnwatchedDownloads)
+                {
+                    <div class="poster-card" @key="DownloadKey(item)">
+                        <a class="poster-select" href="@BuildDownloadPlaybackUrl(item)" aria-label="Lire @item.Title">
+                            <div class="poster-art">
+                                @if (GetLocalPoster(item.TmdbId, item.MediaType) is { } poster) { <img src="@poster" alt="Affiche de @item.Title" loading="lazy" /> }
+                                else { <div class="poster-placeholder">@item.Title</div> }
+                                <span class="media-status-badge downloaded" role="img" aria-label="Téléchargé" title="Téléchargé"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg></span>
+                                <span class="poster-play">▶</span>
+                            </div>
+                            <span class="poster-title">@item.Title</span>
+                            <span class="poster-type">@(item.MediaType == "tv" ? $"Saison {item.SeasonNumber} · Épisode {item.EpisodeNumber}" : "Film téléchargé")</span>
+                        </a>
+                        <a class="poster-info-button" href="@($"/infos/{item.MediaType}/{item.TmdbId}")">ⓘ Plus d’infos</a>
+                    </div>
+                }
+            </div>
+        </section>
+    }
+
+    @if (ActiveCatalog == "all" && LocalWatchlist.Count > 0)
+    {
+        <section class="section local-media-section" aria-label="Médias surveillés">
+            <div class="section-heading"><div><div class="eyebrow">VOTRE LISTE</div><h2>À surveiller</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(WatchlistCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(WatchlistCarousel, 1)">›</button></div></div>
+            <div class="poster-carousel" @ref="WatchlistCarousel">
+                @foreach (var item in VisibleWatchlist)
+                {
+                    <div class="poster-card" @key="item.Key">
+                        <a class="poster-select" href="@($"/infos/{item.MediaType}/{item.TmdbId}")" aria-label="Plus d’informations sur @item.Title">
+                            <div class="poster-art">
+                                @if (GetLocalPoster(item.TmdbId, item.MediaType) is { } poster) { <img src="@poster" alt="Affiche de @item.Title" loading="lazy" /> }
+                                else { <div class="poster-placeholder">@item.Title</div> }
+                                <span class="media-status-badge watchlisted" role="img" aria-label="Surveillé" title="Surveillé"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" /></svg></span>
+                            </div>
+                            <span class="poster-title">@item.Title</span>
+                            <span class="poster-type">@(item.MediaType == "tv" ? (item.SeasonNumber is not null && item.EpisodeNumber is not null ? $"Saison {item.SeasonNumber} · Épisode {item.EpisodeNumber}" : "Série") : "Film")</span>
+                        </a>
+                        <a class="poster-info-button" href="@($"/infos/{item.MediaType}/{item.TmdbId}")">ⓘ Plus d’infos</a>
+                    </div>
                 }
             </div>
         </section>
@@ -81,6 +140,7 @@
                             @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
                             else { <div class="poster-placeholder">@item.Title</div> }
                             <span class="rating">★ @item.Rating.ToString("0.0")</span>
+                            @if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
                             <span class="poster-play">▶</span>
                         </div>
                         <span class="poster-title">@item.Title</span><span class="poster-type">@(item.MediaType == "tv" ? "Série" : "Film")</span>
@@ -95,8 +155,7 @@
     @if (!IsSearching && VisibleIndexerPopular.Count > 0)
     {
         <section class="section genre-section" aria-label="Médias populaires dans les indexeurs">
-            <div class="section-heading"><div><div class="eyebrow">SOURCES CONFIGURÉES · ACTUALISÉES TOUTES LES @IndexerPopularityRefreshHours HEURES</div><h2>Populaires dans vos indexeurs</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(IndexerPopularCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(IndexerPopularCarousel, 1)">›</button></div></div>
-            @if (IndexerPopularityLastUpdated is not null) { <div class="status-line">Cache mis à jour le @IndexerPopularityLastUpdated.Value.ToLocalTime().ToString("g")</div> }
+            <div class="section-heading"><div><h2>Populaires dans vos indexeurs</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(IndexerPopularCarousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(IndexerPopularCarousel, 1)">›</button></div></div>
             <div class="poster-carousel" @ref="IndexerPopularCarousel">
                 @foreach (var item in VisibleIndexerPopular)
                 {
@@ -105,7 +164,9 @@
                             <div class="poster-art">
                                 @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
                                 else { <div class="poster-placeholder">@item.Title</div> }
-                                <span class="rating">★ @item.Rating.ToString("0.0")</span><span class="poster-play">▶</span>
+                                <span class="rating">★ @item.Rating.ToString("0.0")</span>
+                                @if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
+                                <span class="poster-play">▶</span>
                             </div>
                             <span class="poster-title">@item.Title</span><span class="poster-type">@item.AvailableSources source(s) · @item.Seeders pairs</span>
                         </button>
@@ -121,7 +182,7 @@
         @foreach (var row in GenreRows.Where(row => row.Media.Count > 0))
         {
             <section class="section genre-section" @key="row.Name" aria-label="@row.Name">
-                <div class="section-heading"><div><div class="eyebrow">LES PLUS POPULAIRES</div><h2>@row.Name</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(row.Carousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(row.Carousel, 1)">›</button></div></div>
+                <div class="section-heading"><div><h2>@row.Name</h2></div><div class="carousel-controls"><button type="button" aria-label="Défiler vers la gauche" @onclick="() => ScrollCarouselAsync(row.Carousel, -1)">‹</button><button type="button" aria-label="Défiler vers la droite" @onclick="() => ScrollCarouselAsync(row.Carousel, 1)">›</button></div></div>
                 <div class="poster-carousel" @ref="row.Carousel">
                     @foreach (var item in row.Media)
                     {
@@ -130,7 +191,9 @@
                             <div class="poster-art">
                                 @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
                                 else { <div class="poster-placeholder">@item.Title</div> }
-                                <span class="rating">★ @item.Rating.ToString("0.0")</span><span class="poster-play">▶</span>
+                                <span class="rating">★ @item.Rating.ToString("0.0")</span>
+                                @if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
+                                <span class="poster-play">▶</span>
                             </div>
                             <span class="poster-title">@item.Title</span><span class="poster-type">@(item.MediaType == "tv" ? "Série" : "Film")</span>
                             </button>
@@ -149,6 +212,8 @@
     private List<WatchProgressEntry> ContinueWatching = [];
     private readonly HashSet<string> UnavailablePosters = new(StringComparer.OrdinalIgnoreCase);
     private ElementReference WatchingCarousel;
+    private ElementReference DownloadedCarousel;
+    private ElementReference WatchlistCarousel;
     private ElementReference CatalogCarousel;
     private ElementReference IndexerPopularCarousel;
     private IJSObjectReference? carouselModule;
@@ -156,6 +221,24 @@
     private int heroIndex;
     private List<GenreRow> GenreRows = [];
     private MediaItem? Featured;
+    private MediaItem? PreviousFeatured;
+    private bool IsHeroTransitioning;
+    private bool isDisposed;
+    private int heroTransitionVersion;
+    private List<MediaDownloadStatus> LocalDownloads = [];
+    private List<MediaWatchlistEntry> LocalWatchlist = [];
+    private readonly Dictionary<string, string?> LocalPosterUrls = new(StringComparer.OrdinalIgnoreCase);
+    private List<MediaDownloadStatus> UnwatchedDownloads => LocalDownloads
+        .Where(item => item.Completed && item.LastViewedAt is null)
+        .OrderByDescending(item => item.MediaType == "tv" ? item.SeasonNumber ?? 0 : -1)
+        .ThenByDescending(item => item.EpisodeNumber ?? 0)
+        .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    private List<MediaWatchlistEntry> VisibleWatchlist => LocalWatchlist
+        .GroupBy(item => $"{item.MediaType}-{item.TmdbId}", StringComparer.OrdinalIgnoreCase)
+        .Select(group => group.OrderBy(item => item.SeasonNumber).ThenBy(item => item.EpisodeNumber).First())
+        .OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+        .ToList();
     private bool IsLoading = true;
     private bool IsSearching;
     private string? CatalogError;
@@ -164,9 +247,8 @@
     private int genreLoadVersion;
     private bool hasLoadedCatalog;
     private bool hasLoadedIndexerPopular;
+    private bool hasLoadedLocalMediaState;
     private List<IndexerPopularItem> IndexerPopular = [];
-    private DateTimeOffset? IndexerPopularityLastUpdated;
-    private int IndexerPopularityRefreshHours = 8;
     private List<IndexerPopularItem> VisibleIndexerPopular => ActiveCatalog switch
     {
         "films" => IndexerPopular.Where(item => item.MediaType == "movie").ToList(),
@@ -196,7 +278,7 @@
     private List<MediaItem> HeroItems => IsSearching ? [] : VisibleMedia.Take(4).ToList();
     private string StatusMessage => CatalogError ?? (Movies.Count > 0 ? "Le meilleur du moment, sélectionné pour vous" : "Votre espace cinéma personnel");
     private string HeroEyebrow => Featured is null ? "VOTRE CINÉMA, À LA MAISON" : $"À LA UNE · {(Featured.MediaType == "tv" ? "SÉRIE" : "FILM").ToUpperInvariant()}";
-    private string HeroStyle => string.IsNullOrWhiteSpace(Featured?.Backdrop) ? "" : $"background-image: linear-gradient(90deg, #090a0e 0%, rgba(9,10,14,.88) 32%, rgba(9,10,14,.22) 74%), linear-gradient(0deg, #090a0e 0%, transparent 58%), url('{Featured.Backdrop}')";
+    private static string HeroBackgroundStyle(MediaItem? item) => string.IsNullOrWhiteSpace(item?.Backdrop) ? "" : $"background-image:url('{item.Backdrop}')";
 
     protected override void OnInitialized() => Navigation.LocationChanged += HandleLocationChanged;
 
@@ -204,10 +286,10 @@
     {
         try
         {
-            ContinueWatching = (await ProgressStore.GetAllAsync()).ToList();
+            ContinueWatching = await Http.GetFromJsonAsync<List<WatchProgressEntry>>("/api/watch-progress") ?? [];
             await LoadMissingPostersAsync();
         }
-        catch (IOException) { ContinueWatching = []; }
+        catch (Exception ex) when (ex is IOException or HttpRequestException) { ContinueWatching = []; }
         var query = string.IsNullOrWhiteSpace(SearchQuery) ? null : SearchQuery.Trim();
         var queryChanged = !string.Equals(lastLoadedQuery, query, StringComparison.Ordinal);
         if (!hasLoadedCatalog || !string.Equals(lastLoadedQuery, query, StringComparison.Ordinal))
@@ -216,11 +298,10 @@
             lastLoadedQuery = query;
             await LoadCatalogAsync(query);
         }
-        if (!hasLoadedIndexerPopular)
-        {
-            hasLoadedIndexerPopular = true;
-            await LoadIndexerPopularityAsync();
-        }
+        var localLoads = new List<Task>(2);
+        if (!hasLoadedIndexerPopular) { hasLoadedIndexerPopular = true; localLoads.Add(LoadIndexerPopularityAsync()); }
+        if (!hasLoadedLocalMediaState) { hasLoadedLocalMediaState = true; localLoads.Add(LoadLocalMediaStateAsync()); }
+        if (localLoads.Count > 0) await Task.WhenAll(localLoads);
         UpdateFeaturedForCurrentTab();
         if (!string.Equals(lastGenreScope, ActiveCatalog, StringComparison.Ordinal) || queryChanged)
         {
@@ -370,7 +451,7 @@
             IsSearching = !string.IsNullOrWhiteSpace(query);
             var visible = VisibleMedia;
             if (visible.Count > 0 && (Featured is null || !visible.Any(item => item.Id == Featured.Id && item.MediaType == Featured.MediaType)))
-                Featured = visible[0];
+                SetFeatured(visible[0], animate: Featured is not null);
             if (response is { Configured: false }) CatalogError = "Le secret TMDB n’est pas chargé. Lancez l’application en environnement Development.";
         }
         catch (HttpRequestException) { CatalogError = "Impossible de joindre le catalogue TMDB."; }
@@ -385,8 +466,6 @@
             if (snapshot is not null)
             {
                 IndexerPopular = snapshot.Results;
-                IndexerPopularityLastUpdated = snapshot.LastUpdated;
-                IndexerPopularityRefreshHours = (int)Math.Round(snapshot.RefreshIntervalHours);
                 if (snapshot.IsRefreshing && IndexerPopular.Count == 0)
                 {
                     for (var attempt = 0; attempt < 4 && IndexerPopular.Count == 0; attempt++)
@@ -395,12 +474,59 @@
                         snapshot = await Http.GetFromJsonAsync<IndexerPopularityResponse>("/api/catalog/indexer-popular");
                         if (snapshot is null) break;
                         IndexerPopular = snapshot.Results;
-                        IndexerPopularityLastUpdated = snapshot.LastUpdated;
                     }
                 }
             }
         }
         catch (HttpRequestException) { }
+    }
+
+    private async Task LoadLocalMediaStateAsync()
+    {
+        try
+        {
+            var state = await Http.GetFromJsonAsync<LocalMediaStateResponse>("/api/catalog/local-status");
+            LocalDownloads = state?.Downloads ?? [];
+            LocalWatchlist = state?.Watchlist ?? [];
+            var posterTargets = LocalDownloads.Where(item => item.Completed && item.LastViewedAt is null)
+                .Select(item => (item.TmdbId, item.MediaType))
+                .Concat(LocalWatchlist.Select(item => (item.TmdbId, item.MediaType)))
+                .DistinctBy(item => LocalMediaKey(item.TmdbId, item.MediaType), StringComparer.OrdinalIgnoreCase)
+                .Where(item => !Movies.Any(media => media.Id == item.TmdbId && string.Equals(media.MediaType, item.MediaType, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(media.Poster)))
+                .ToArray();
+            await Task.WhenAll(posterTargets.Select(async item =>
+            {
+                try
+                {
+                    var details = await Http.GetFromJsonAsync<WatchPosterResponse>($"/api/catalog/{item.MediaType}/{item.TmdbId}");
+                    LocalPosterUrls[LocalMediaKey(item.TmdbId, item.MediaType)] = details?.Poster;
+                }
+                catch (HttpRequestException) { LocalPosterUrls[LocalMediaKey(item.TmdbId, item.MediaType)] = null; }
+            }));
+        }
+        catch (HttpRequestException) { LocalDownloads = []; LocalWatchlist = []; }
+    }
+
+    private string? GetLocalPoster(int id, string mediaType) => Movies
+        .FirstOrDefault(item => item.Id == id && string.Equals(item.MediaType, mediaType, StringComparison.OrdinalIgnoreCase))?.Poster
+        ?? (LocalPosterUrls.TryGetValue(LocalMediaKey(id, mediaType), out var poster) ? poster : null);
+
+    private static string LocalMediaKey(int id, string mediaType) => $"{mediaType}-{id}";
+    private static string DownloadKey(MediaDownloadStatus item) => $"{item.MediaType}-{item.TmdbId}-{item.SeasonNumber}-{item.EpisodeNumber}";
+    private static string BuildDownloadPlaybackUrl(MediaDownloadStatus item) => item.SeasonNumber is not null && item.EpisodeNumber is not null
+        ? $"/lecture/{item.MediaType}/{item.TmdbId}?seasonNumber={item.SeasonNumber}&episodeNumber={item.EpisodeNumber}"
+        : $"/lecture/{item.MediaType}/{item.TmdbId}";
+
+    private MediaBadge? GetMediaBadge(int id, string? mediaType)
+    {
+        var matchingDownloads = LocalDownloads.Where(status => status.TmdbId == id
+            && string.Equals(status.MediaType, mediaType, StringComparison.OrdinalIgnoreCase)).ToArray();
+        if (matchingDownloads.Any(status => status.Completed || status.State == "Disponible")) return new("Téléchargé", "downloaded", "M20 6 9 17l-5-5");
+        if (matchingDownloads.Length > 0) return new("Téléchargement en cours", "downloading", "M12 3v11m0 0 4-4m-4 4-4-4M4 17v3h16v-3");
+        if (LocalWatchlist.Any(item => item.TmdbId == id
+            && string.Equals(item.MediaType, mediaType, StringComparison.OrdinalIgnoreCase))) return new("Surveillé", "watchlisted", "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7-10-7-10-7Zm10 3a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z");
+        return null;
     }
 
     private Task SelectIndexerPopular(IndexerPopularItem item) => SelectFeature(new MediaItem(item.Id, item.Title, item.Overview,
@@ -416,11 +542,12 @@
         }
         var index = items.FindIndex(item => Featured is not null && item.Id == Featured.Id && item.MediaType == Featured.MediaType);
         heroIndex = index < 0 ? 0 : index;
-        Featured = items[heroIndex];
+        SetFeatured(items[heroIndex]);
         if (items.Count > 1 && ActiveCatalog == "all")
         {
             heroRotationTimer ??= new Timer(_ => _ = InvokeAsync(RotateFeatured), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
-            heroRotationTimer.Change(TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(8));
+            var intervalMs = Math.Clamp(Configuration.GetValue("Playwright:HeroRotationMilliseconds", 8000), 200, 60000);
+            heroRotationTimer.Change(TimeSpan.FromMilliseconds(intervalMs), TimeSpan.FromMilliseconds(intervalMs));
         }
         else
         {
@@ -433,7 +560,7 @@
         var items = HeroItems;
         if (items.Count < 2) return;
         heroIndex = (heroIndex + 1) % items.Count;
-        Featured = items[heroIndex];
+        SetFeatured(items[heroIndex]);
         StateHasChanged();
     }
 
@@ -441,7 +568,34 @@
     {
         if (index < 0 || index >= HeroItems.Count) return;
         heroIndex = index;
-        Featured = HeroItems[index];
+        SetFeatured(HeroItems[index]);
+    }
+
+    private void SetFeatured(MediaItem? item, bool animate = true)
+    {
+        if (item is null || (Featured is not null && Featured.Id == item.Id && Featured.MediaType == item.MediaType)) return;
+        var previous = Featured;
+        Featured = item;
+        IsHeroTransitioning = animate && previous is not null;
+        PreviousFeatured = IsHeroTransitioning ? previous : null;
+        if (IsHeroTransitioning)
+        {
+            var version = Interlocked.Increment(ref heroTransitionVersion);
+            _ = EndHeroTransitionAsync(version);
+        }
+    }
+
+    private async Task EndHeroTransitionAsync(int version)
+    {
+        await Task.Delay(850);
+        if (isDisposed) return;
+        await InvokeAsync(() =>
+        {
+            if (version != heroTransitionVersion) return;
+            IsHeroTransitioning = false;
+            PreviousFeatured = null;
+            StateHasChanged();
+        });
     }
 
     private Task SelectFeature(MediaItem item)
@@ -458,7 +612,14 @@
         string? Poster, string? Backdrop, string? OriginalLanguage, int? Year, double Rating, double TmdbPopularity,
         int AvailableSources, int Seeders, int Grabs, long PopularityScore, string[] IndexerNames);
     private sealed record WatchPosterResponse(string? Poster);
+    private sealed record LocalMediaStateResponse(List<MediaDownloadStatus> Downloads, List<MediaWatchlistEntry> Watchlist);
+    private sealed record MediaBadge(string Label, string CssClass, string IconPath);
     private sealed record MediaItem(int Id, string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, string? OriginalLanguage, int? Year, double Popularity = 0);
+    private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string OriginalLanguage, string State, double Progress,
+        long DownloadRate, string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
+        int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream, DateTimeOffset? LastViewedAt = null);
+    private sealed record MediaWatchlistEntry(string Key, int TmdbId, string MediaType, string Title, string OriginalLanguage, int? Year,
+        int? SeasonNumber, int? EpisodeNumber, string? EpisodeTitle, int? RuntimeMinutes, DateTimeOffset AddedAt, DateTimeOffset? LastCheckedAt = null);
     private sealed record GenreDefinition(string Name, int? MovieId, int? TvId);
     private sealed class GenreRow(string name, List<MediaItem> media)
     {
@@ -479,6 +640,7 @@
 
     public async ValueTask DisposeAsync()
     {
+        isDisposed = true;
         Interlocked.Increment(ref genreLoadVersion);
         Navigation.LocationChanged -= HandleLocationChanged;
         heroRotationTimer?.Dispose();

@@ -178,6 +178,21 @@ public sealed class MediaDownloadService(
         .OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
         .ToArray();
 
+    public IReadOnlyList<MediaDownloadStatus> GetMediaStatuses() => records.Values
+        .Select(record =>
+        {
+            managers.TryGetValue(record.Key, out var manager);
+            if (record.Completed)
+                return GetCachedVideoPath(record.TmdbId, record.MediaType, record.SeasonNumber, record.EpisodeNumber) is not null
+                    ? ToStatus(record, manager, "Disponible") : null;
+            return manager is not null && manager.Progress < 100
+                ? ToStatus(record, manager, "Téléchargement en cours") : null;
+        })
+        .Where(status => status is not null)
+        .Select(status => status!)
+        .OrderBy(status => status.Title, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+
     public async Task<bool> CancelAsync(int tmdbId, string mediaType, int? seasonNumber = null, int? episodeNumber = null, CancellationToken ct = default)
     {
         var key = Key(tmdbId, mediaType, seasonNumber, episodeNumber);
@@ -368,7 +383,7 @@ public sealed class MediaDownloadService(
             downloadRate, record.Directory, record.Completed, $"{record.Source} · {record.ResultTitle}",
             peers, record.TrackerCount, engine?.Dht.State.ToString() ?? "indisponible",
             record.SeasonNumber, record.EpisodeNumber,
-            bufferedBytes, requiredBytes, canStream);
+            bufferedBytes, requiredBytes, canStream, record.LastViewedAt);
     }
 
     private long GetRequiredPlaybackBufferBytes(MediaDownloadRecord record, long fileLength, long downloadRate)
@@ -468,7 +483,7 @@ public sealed record MediaDownloadRequest(int TmdbId, string Title, string Media
     int? RuntimeMinutes = null);
 public sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string OriginalLanguage, string State, double Progress,
     long DownloadRate, string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
-    int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream);
+    int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream, DateTimeOffset? LastViewedAt = null);
 public sealed record MediaDownloadRecord(string Key, int TmdbId, string MediaType, string Title, string OriginalLanguage,
     int? Year, string Source, string ResultTitle, string Link, string? Size, string Directory, bool Completed,
     DateTimeOffset AddedAt, DateTimeOffset? CompletedAt, DateTimeOffset? LastViewedAt, int TrackerCount = 0,

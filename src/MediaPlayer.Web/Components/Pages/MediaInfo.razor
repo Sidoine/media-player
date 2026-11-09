@@ -1,7 +1,6 @@
 @page "/infos/{MediaType}/{TmdbId:int}"
 @inject HttpClient Http
 @inject NavigationManager Navigation
-@inject WatchProgressStore ProgressStore
 
 <PageTitle>@(Details?.Title ?? "Informations") · Écran</PageTitle>
 
@@ -31,6 +30,18 @@ else if (Details is not null)
                 @if (Details.Genres.Count > 0)
                 {
                     <div class="media-info-genres">@string.Join(" · ", Details.Genres)</div>
+                }
+                @if (MediaType == "tv" && Details.Creators is { Count: > 0 })
+                {
+                    <div class="media-info-credits"><span><strong>Créée par</strong> @string.Join(" · ", Details.Creators)</span></div>
+                }
+                else if (Details.Directors is { Count: > 0 })
+                {
+                    <div class="media-info-credits"><span><strong>Réalisation</strong> @string.Join(" · ", Details.Directors)</span></div>
+                }
+                @if (Details.Cast is { Count: > 0 })
+                {
+                    <div class="media-info-credits"><span><strong>Avec</strong> @string.Join(" · ", Details.Cast)</span></div>
                 }
                 <p class="media-info-overview">@(string.IsNullOrWhiteSpace(Details.Overview) ? "Aucun synopsis n’est disponible." : Details.Overview)</p>
                 <div class="media-info-actions">
@@ -172,7 +183,8 @@ else if (Details is not null)
     private async Task LoadEpisodesAsync()
     {
         var seasons = Details!.Seasons.Where(season => season.EpisodeCount > 0).OrderBy(season => season.SeasonNumber).ToArray();
-        EpisodeProgress = (await ProgressStore.GetEpisodesAsync(TmdbId)).ToList();
+        EpisodeProgress = (await Http.GetFromJsonAsync<List<WatchProgressEntry>>("/api/watch-progress") ?? [])
+            .Where(item => item.TmdbId == TmdbId && item.MediaType == "tv" && item.SeasonNumber is not null && item.EpisodeNumber is not null).ToList();
         if (seasons.Length == 0) return;
         var loaded = await Task.WhenAll(seasons.Select(async season =>
         {
@@ -207,7 +219,8 @@ else if (Details is not null)
 
     private sealed record MediaDetails(int Id, string Title, string? Overview, string? Poster, string? Backdrop,
         string MediaType, double Rating, string? OriginalLanguage, int? Year, List<string> Genres,
-        int? RuntimeMinutes, int? SeasonCount, int? EpisodeCount, List<SeasonSummary> Seasons, string? TrailerUrl);
+        int? RuntimeMinutes, int? SeasonCount, int? EpisodeCount, List<SeasonSummary> Seasons, string? TrailerUrl,
+        List<string>? Directors = null, List<string>? Creators = null, List<string>? Cast = null);
     private sealed record SeasonSummary(int SeasonNumber, string Name, int EpisodeCount, string? Poster);
     private sealed record SeasonEpisodesResponse(int SeasonNumber, List<EpisodeDetails> Episodes);
     private sealed record EpisodeDetails(int Id, int SeasonNumber, int EpisodeNumber, string? Title, string? Overview, string? Still, string? AirDate, int? RuntimeMinutes);

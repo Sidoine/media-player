@@ -82,3 +82,39 @@
 .episode-empty { padding: 24px 0; color: #aeb0b8; font-size: 13px; }
 .watch-status .watch-status-actions a.button-light { color: #15151a; text-decoration: none; }
 @media(max-width:650px) { .series-info-page .media-info-hero { min-height: clamp(550px, 76vh, 700px); padding: 130px 6% 42px; } .series-info-page .series-episodes { width: 100%; padding: 10px 6% 28px; } .episode-card { grid-template-columns: 1fr; gap: 12px; } .episode-still { max-width: 100%; } .episode-heading { font-size: 14px; } }
+.watching-card > .watching-episode { margin-top: .25rem; color: #d4d5da; font-size: .72rem; }
+.media-status-badge { position: absolute; z-index: 1; top: 9px; right: 9px; display: grid; width: 30px; height: 30px; place-items: center; padding: 5px; border: 1px solid #ffffff45; border-radius: 50%; color: #fff; background: #25262ddd; box-shadow: 0 2px 8px #0008; }
+.media-status-badge svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.media-status-badge.downloaded { background: #17633fdf; }
+.media-status-badge.downloading { background: #9a5b10ed; }
+.media-status-badge.watchlisted { background: #474b65ed; }
+.indexer-dashboard-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.dashboard-card { display: flex; min-width: 0; flex-direction: column; gap: 8px; padding: 16px; border: 1px solid #282930; border-radius: 6px; background: #111217; }
+.dashboard-card > strong { font-size: 14px; }
+.dashboard-card > span:not(.eyebrow) { color: #aeb0b8; font-size: 11px; line-height: 1.45; }
+@media(max-width:700px) { .indexer-dashboard-grid { grid-template-columns: 1fr; } }
+.settings-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); align-items: start; gap: 28px; }
+.settings-nav { position: fixed; z-index: 20; top: 120px; left: 0; display: flex; width: 190px; max-height: calc(100vh - 140px); flex-direction: column; gap: 5px; overflow-y: auto; padding: 10px 8px 10px 0; background: linear-gradient(90deg, #090a0e 88%, #090a0e00); }
+.settings-nav button { display: block; width: 100%; padding: 11px 13px; border: 0; border-left: 2px solid transparent; border-radius: 0 4px 4px 0; color: #aeb0b8; background: transparent; text-align: left; font: inherit; font-size: 12px; cursor: pointer; transition: color .15s, background .15s, border-color .15s; }
+.settings-nav button.active, .settings-nav button:hover, .settings-nav button:focus-visible { color: #fff; border-left-color: #e50914; background: #ffffff0b; outline: none; }
+.settings-content { min-width: 0; }
+.settings-content > .settings-panel { scroll-margin-top: 92px; }
+.media-info-credits { margin-top: 12px; color: #c5c6cd; font-size: 12px; line-height: 1.6; }
+.media-info-credits strong { margin-right: 6px; color: #fff; font-weight: 700; }
+.hero-background { position: absolute; z-index: 0; inset: 0; background-position: center; background-size: cover; }
+.hero-shade { z-index: 1; }
+.hero-copy { z-index: 2; }
+.hero-pagination { z-index: 2; }
+.hero-background-entering { animation: heroBackgroundIn .85s ease both; }
+.hero-background-leaving { animation: heroBackgroundOut .85s ease both; }
+.hero-copy-entering { animation: heroCopyIn .55s ease both; }
+@keyframes heroBackgroundIn { from { opacity: 0; transform: scale(1.025); } to { opacity: 1; transform: scale(1); } }
+@keyframes heroBackgroundOut { from { opacity: 1; } to { opacity: 0; } }
+@keyframes heroCopyIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@media(max-width:650px) { .hero-background { background-position: 62% center; } }
+@media(prefers-reduced-motion:reduce) { .hero-background-entering,.hero-background-leaving,.hero-copy-entering { animation-duration: .01ms; } }
+@media(min-width:801px) { .settings-page { width: min(1120px, calc(100vw - 260px)); margin-left: max(220px, calc(190px + (100vw - 190px - 1120px) / 2)); margin-right: 30px; } .settings-layout { grid-template-columns: minmax(0, 1fr); } }
+@media(max-width:800px) { .settings-layout { grid-template-columns: 1fr; gap: 8px; } .settings-nav { position: sticky; z-index: 10; top: 108px; flex-direction: row; overflow-x: auto; gap: 4px; margin: 0 -1px; padding: 8px 1px; background: #090a0e; scrollbar-width: thin; } .settings-nav button { flex: 0 0 auto; width: auto; padding: 9px 11px; border: 0; border-bottom: 2px solid transparent; border-radius: 4px 4px 0 0; white-space: nowrap; font-size: 11px; } .settings-nav button.active, .settings-nav button:hover, .settings-nav button:focus-visible { border-left-color: transparent; border-bottom-color: #e50914; } }
+.topbar .profile { position: absolute; top: 50%; right: 24px; margin: 0; transform: translateY(-50%); }
+.topbar .topbar-search { margin-right: 48px; }
+@media(max-width:650px) { .topbar .profile { top: 16px; right: 5%; transform: none; } .topbar .topbar-search { margin-right: 42px; } }
