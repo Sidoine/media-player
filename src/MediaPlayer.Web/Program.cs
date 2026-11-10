@@ -465,12 +465,19 @@ app.MapPost("/api/watchlist/next-episode", async (NextEpisodeRequest input, Medi
 });
 app.MapDelete("/api/downloads/{tmdbId:int}", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, MediaDownloadService downloads, CancellationToken ct) =>
     await downloads.CancelAsync(tmdbId, mediaType ?? "movie", seasonNumber, episodeNumber, ct) ? Results.NoContent() : Results.NotFound());
-app.MapPost("/api/downloads", async (MediaDownloadRequest input, TorrentCatalogStore catalogs, SelectedIndexerStore selected, MediaDownloadService downloads, CancellationToken ct) =>
+app.MapPost("/api/downloads", async (MediaDownloadRequest input, TorrentCatalogStore catalogs, SelectedIndexerStore selected, MediaDownloadService downloads, MediaWatchlistStore watchlist, ILogger<Program> logger, CancellationToken ct) =>
 {
     var hasRights = (await catalogs.GetAll(ct)).Any(source => source.RightsConfirmed && string.Equals(source.Name, input.Source, StringComparison.OrdinalIgnoreCase))
         || (await selected.GetAllAsync(ct)).Any(source => source.RightsConfirmed && string.Equals(source.Name, input.Source, StringComparison.OrdinalIgnoreCase));
     if (!hasRights) return Results.BadRequest(new { error = "La source n’est pas configurée avec une attestation de droits." });
-    try { return Results.Accepted($"/api/downloads/{input.TmdbId}?mediaType={Uri.EscapeDataString(input.MediaType)}&seasonNumber={input.SeasonNumber}&episodeNumber={input.EpisodeNumber}", await downloads.StartAsync(input with { RightsConfirmed = true }, ct)); }
+    try
+    {
+        var status = await downloads.StartAsync(input with { RightsConfirmed = true }, ct);
+        var watchKey = MediaWatchlistEntry.CreateKey(input.TmdbId, input.MediaType, input.SeasonNumber, input.EpisodeNumber);
+        try { await watchlist.RemoveAsync(watchKey, ct); }
+        catch (IOException ex) { logger.LogWarning(ex, "Download started for {WatchKey}, but its watchlist entry could not be removed.", watchKey); }
+        return Results.Accepted($"/api/downloads/{input.TmdbId}?mediaType={Uri.EscapeDataString(input.MediaType)}&seasonNumber={input.SeasonNumber}&episodeNumber={input.EpisodeNumber}", status);
+    }
     catch (InvalidOperationException ex) { return Results.BadRequest(new { error = ex.Message }); }
 });
 
