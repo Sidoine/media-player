@@ -1,0 +1,13 @@
+.library-properties-heading { display:flex; align-items:center; justify-content:space-between; margin-bottom:18px; }
+.library-properties-heading h2 { margin:0; font:700 22px Manrope,sans-serif; }
+.media-properties-list { display:grid; gap:0; margin:0; }
+.media-properties-list>div { display:grid; grid-template-columns:minmax(125px,.7fr) 2fr; gap:18px; padding:12px 2px; border-bottom:1px solid #303139; }
+.media-properties-list dt { color:#9da0aa; font-size:11px; }
+.media-properties-list dd { margin:0; color:#f0f0f3; font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.library-delete-dialog h2 { margin:0 0 12px; font:700 21px Manrope,sans-serif; }
+.library-delete-dialog p { margin:0; color:#aeb0b8; font-size:12px; overflow-wrap:anywhere; }
+.library-delete-actions { display:flex; justify-content:flex-end; gap:9px; margin-top:23px; }
+
+@media(max-width:650px) {
+    .media-properties-list>div { grid-template-columns:1fr; gap:5px; }
+}

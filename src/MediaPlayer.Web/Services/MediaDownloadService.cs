@@ -9,14 +9,16 @@ public sealed class MediaDownloadService(
     IWebHostEnvironment environment,
     IConfiguration configuration,
     BittorrentTrackerStore trackerStore,
+    MediaStorageSettingsStore storageSettings,
     ILogger<MediaDownloadService> logger) : IHostedService, IAsyncDisposable
 {
-    private readonly string cacheRoot = ResolveCacheRoot(environment, configuration);
-    private readonly string manifestPath = Path.Combine(ResolveCacheRoot(environment, configuration), "downloads.json");
+    private readonly string cacheRoot = storageSettings.Current.CacheRoot;
+    private readonly string manifestPath = Path.Combine(environment.ContentRootPath, "App_Data", "downloads.json");
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly SemaphoreSlim manifestGate = new(1, 1);
     private readonly ConcurrentDictionary<string, TorrentManager> managers = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, MediaDownloadRecord> records = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, long> observedUploadedBytes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Lazy<Task>> streamPrebuffers = new(StringComparer.OrdinalIgnoreCase);
     private ClientEngine? engine;
     private CancellationTokenSource? monitorCancellation;
@@ -27,6 +29,8 @@ public sealed class MediaDownloadService(
     {
         Directory.CreateDirectory(cacheRoot);
         await LoadManifestAsync(cancellationToken);
+        foreach (var record in records.Values.Where(item => item.Completed && !CanSeed(item, storageSettings.Current.ShareRatioLimit)))
+            records[record.Key] = record with { SeedingStopped = true };
         var settings = new EngineSettingsBuilder
         {
             CacheDirectory = Path.Combine(cacheRoot, ".engine"),
@@ -37,7 +41,7 @@ public sealed class MediaDownloadService(
         }.ToSettings();
         engine = new ClientEngine(settings);
 
-        foreach (var record in records.Values.Where(item => !item.Completed))
+        foreach (var record in records.Values.Where(item => !item.Completed || CanSeed(item, storageSettings.Current.ShareRatioLimit)))
             await ResumeAsync(record, cancellationToken);
 
         monitorCancellation = new CancellationTokenSource();
@@ -58,8 +62,8 @@ public sealed class MediaDownloadService(
         }
         if (engine is not null)
         {
-            foreach (var manager in managers.Values)
-                try { await manager.StopAsync(); }
+            foreach (var (key, manager) in managers)
+                try { CaptureUploadedBytes(key, manager); await manager.StopAsync(); }
                 catch (Exception ex) { logger.LogDebug(ex, "Could not stop torrent manager cleanly."); }
             engine.Dispose();
             engine = null;
@@ -133,8 +137,6 @@ public sealed class MediaDownloadService(
     public async Task MarkViewedAsync(string absolutePath, CancellationToken ct = default)
     {
         var fullPath = Path.GetFullPath(absolutePath);
-        var root = Path.GetFullPath(cacheRoot) + Path.DirectorySeparatorChar;
-        if (!fullPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return;
         foreach (var record in records.Values)
         {
             var directory = Path.GetFullPath(record.Directory) + Path.DirectorySeparatorChar;
@@ -149,6 +151,28 @@ public sealed class MediaDownloadService(
     }
 
     public string CacheRoot => cacheRoot;
+
+    public long GetStorageUsedBytes() => records.Values.Select(item => item.Directory).Distinct(StringComparer.OrdinalIgnoreCase)
+        .Where(Directory.Exists).Sum(DirectorySize);
+
+    public async Task ApplySharingPolicyAsync(CancellationToken ct = default)
+    {
+        var limit = storageSettings.Current.ShareRatioLimit;
+        foreach (var record in records.Values.Where(item => item.Completed))
+        {
+            if (managers.TryGetValue(record.Key, out var manager))
+            {
+                if (!CanSeed(record, limit)) await StopSeedingAsync(record, manager, ct);
+            }
+            else if (record.SeedingStopped && CanSeed(record, limit) && engine is not null)
+            {
+                var resumed = record with { SeedingStopped = false };
+                records[record.Key] = resumed;
+                await ResumeAsync(resumed, ct);
+            }
+        }
+        await SaveManifestAsync(ct);
+    }
 
     public async Task<bool> DeleteCachedMediaFileAsync(string absolutePath, CancellationToken ct = default)
     {
@@ -255,7 +279,7 @@ public sealed class MediaDownloadService(
 
     private async Task ResumeAsync(MediaDownloadRecord record, CancellationToken ct)
     {
-        if (record.Completed && ContainsVideo(record.Directory)) return;
+        if (record.Completed && ContainsVideo(record.Directory) && !CanSeed(record, storageSettings.Current.ShareRatioLimit)) return;
         try
         {
             var (downloadLink, trackerCount) = await AddConfiguredTrackersAsync(record.Link, ct);
@@ -265,7 +289,7 @@ public sealed class MediaDownloadService(
                 manager = await engine!.AddStreamingAsync(magnet, record.Directory);
             else
                 manager = await engine!.AddStreamingAsync(downloadLink, record.Directory);
-            records[record.Key] = record with { Link = downloadLink, TrackerCount = trackerCount };
+            records[record.Key] = record with { Link = downloadLink, TrackerCount = trackerCount, SeedingStopped = false };
             managers[record.Key] = manager;
             await manager.StartAsync();
         }
@@ -298,9 +322,19 @@ public sealed class MediaDownloadService(
                 foreach (var (key, manager) in managers)
                 {
                     if (!records.TryGetValue(key, out var record)) continue;
+                    var withUpload = CaptureUploadedBytes(key, manager, record);
+                    if (string.IsNullOrWhiteSpace(withUpload.Size) && manager.Torrent is not null)
+                        withUpload = withUpload with { Size = manager.Torrent.Size.ToString(System.Globalization.CultureInfo.InvariantCulture) };
+                    if (withUpload != record) { records[key] = withUpload; record = withUpload; changed = true; }
                     if (manager.Progress >= 100 && !record.Completed)
                     {
-                        records[key] = record with { Completed = true, CompletedAt = DateTimeOffset.UtcNow };
+                        record = record with { Completed = true, CompletedAt = DateTimeOffset.UtcNow };
+                        records[key] = record;
+                        changed = true;
+                    }
+                    if (record.Completed && !CanSeed(record, storageSettings.Current.ShareRatioLimit))
+                    {
+                        await StopSeedingAsync(record, manager, ct);
                         changed = true;
                     }
                 }
@@ -312,10 +346,10 @@ public sealed class MediaDownloadService(
 
     private async Task EnsureCapacityAsync(long incomingBytes, string keepKey, CancellationToken ct)
     {
-        var maxBytes = configuration.GetValue<long?>("Media:CacheMaxBytes") ?? 500L * 1024 * 1024 * 1024;
+        var maxBytes = storageSettings.Current.CacheMaxBytes;
         if (incomingBytes <= 0) return;
         if (incomingBytes > maxBytes) throw new InvalidOperationException("Ce média dépasse la capacité maximale configurée pour le cache.");
-        var used = records.Values.Where(item => item.Completed && Directory.Exists(item.Directory)).Sum(item => DirectorySize(item.Directory));
+        var used = GetStorageUsedBytes();
         foreach (var victim in records.Values.Where(item => item.Key != keepKey && item.Completed && Directory.Exists(item.Directory))
                      .OrderBy(item => item.LastViewedAt.HasValue ? 0 : 1)
                      .ThenBy(item => item.LastViewedAt ?? item.AddedAt))
@@ -324,6 +358,8 @@ public sealed class MediaDownloadService(
             try
             {
                 var bytes = DirectorySize(victim.Directory);
+                if (managers.TryGetValue(victim.Key, out var seedingManager))
+                    await StopSeedingAsync(victim, seedingManager, ct);
                 Directory.Delete(victim.Directory, recursive: true);
                 records.TryRemove(victim.Key, out _);
                 managers.TryRemove(victim.Key, out _);
@@ -336,12 +372,47 @@ public sealed class MediaDownloadService(
             throw new InvalidOperationException("Le cache est plein et aucun ancien média ne peut être supprimé pour libérer assez d’espace.");
     }
 
-    private async Task LoadManifestAsync(CancellationToken ct)
+    private MediaDownloadRecord CaptureUploadedBytes(string key, TorrentManager manager, MediaDownloadRecord? current = null)
     {
-        if (!File.Exists(manifestPath)) return;
+        current ??= records[key];
+        var sent = manager.Monitor.DataBytesSent;
+        var previous = observedUploadedBytes.GetOrAdd(key, sent);
+        if (sent < previous) { observedUploadedBytes[key] = sent; return current; }
+        if (sent == previous) return current;
+        observedUploadedBytes[key] = sent;
+        return current with { UploadedBytes = current.UploadedBytes + sent - previous };
+    }
+
+    private async Task StopSeedingAsync(MediaDownloadRecord record, TorrentManager manager, CancellationToken ct)
+    {
         try
         {
-            await using var stream = File.OpenRead(manifestPath);
+            await manager.StopAsync(TimeSpan.FromSeconds(5));
+            if (engine is not null) await engine.RemoveAsync(manager, RemoveMode.KeepAllData);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or OperationCanceledException)
+        { logger.LogDebug(ex, "Could not stop seeding for {MediaKey}.", record.Key); }
+        managers.TryRemove(record.Key, out _);
+        observedUploadedBytes.TryRemove(record.Key, out _);
+        records[record.Key] = record with { SeedingStopped = true };
+        await SaveManifestAsync(ct);
+    }
+
+    private static bool CanSeed(MediaDownloadRecord record, double? limit)
+    {
+        if (limit is null) return true;
+        if (limit <= 0) return false;
+        var bytes = ParseBytes(record.Size);
+        return bytes <= 0 || record.UploadedBytes / (double)bytes < limit.Value;
+    }
+
+    private async Task LoadManifestAsync(CancellationToken ct)
+    {
+        var sourcePath = File.Exists(manifestPath) ? manifestPath : Path.Combine(cacheRoot, "downloads.json");
+        if (!File.Exists(sourcePath)) return;
+        try
+        {
+            await using var stream = File.OpenRead(sourcePath);
             var items = await JsonSerializer.DeserializeAsync<List<MediaDownloadRecord>>(stream, cancellationToken: ct) ?? [];
             foreach (var item in items)
             {
@@ -487,5 +558,5 @@ public sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Ti
 public sealed record MediaDownloadRecord(string Key, int TmdbId, string MediaType, string Title, string OriginalLanguage,
     int? Year, string Source, string ResultTitle, string Link, string? Size, string Directory, bool Completed,
     DateTimeOffset AddedAt, DateTimeOffset? CompletedAt, DateTimeOffset? LastViewedAt, int TrackerCount = 0,
-    int? SeasonNumber = null, int? EpisodeNumber = null, int? RuntimeMinutes = null);
+    int? SeasonNumber = null, int? EpisodeNumber = null, int? RuntimeMinutes = null, long UploadedBytes = 0, bool SeedingStopped = false);
 public sealed record CompletedMediaFile(string Name, string FullPath, string MediaType);

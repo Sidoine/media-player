@@ -1,0 +1,58 @@
+@implements IDisposable
+
+@if (!string.IsNullOrWhiteSpace(Message))
+{
+    <div class="toast-region" aria-live="polite" aria-atomic="true">
+        <div class="toast toast-@Variant" role="@(Variant == "error" ? "alert" : "status")">
+            <span class="toast-icon" aria-hidden="true">@(Variant == "error" ? "!" : "✓")</span>
+            <span class="toast-message">@Message</span>
+            <button type="button" class="toast-close" aria-label="Fermer la notification" @onclick="DismissAsync">×</button>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string? Message { get; set; }
+    [Parameter] public string Variant { get; set; } = "success";
+    [Parameter] public int Duration { get; set; } = 4000;
+    [Parameter] public long Trigger { get; set; }
+    [Parameter] public EventCallback OnDismiss { get; set; }
+
+    private long _scheduledTrigger = long.MinValue;
+    private CancellationTokenSource? _dismissToken;
+
+    protected override void OnParametersSet()
+    {
+        if (string.IsNullOrWhiteSpace(Message) || Trigger == _scheduledTrigger)
+            return;
+
+        _scheduledTrigger = Trigger;
+        _dismissToken?.Cancel();
+        _dismissToken?.Dispose();
+        _dismissToken = new CancellationTokenSource();
+        _ = DismissAfterDelayAsync(_dismissToken.Token);
+    }
+
+    private async Task DismissAfterDelayAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            await Task.Delay(Duration, cancellationToken);
+            await InvokeAsync(() => OnDismiss.InvokeAsync());
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+    }
+
+    private Task DismissAsync() => OnDismiss.InvokeAsync();
+
+    public void Dispose()
+    {
+        _dismissToken?.Cancel();
+        _dismissToken?.Dispose();
+    }
+}

@@ -10,7 +10,7 @@
 }
 else if (!string.IsNullOrWhiteSpace(ErrorMessage))
 {
-    <section class="media-info-error"><h1>Informations indisponibles</h1><p>@ErrorMessage</p><a class="button button-light" href="@CatalogUrl">← Retour au catalogue</a></section>
+    <section class="media-info-error"><h1>Informations indisponibles</h1><p>@ErrorMessage</p><AppButton Variant="light" Href="@CatalogUrl">← Retour au catalogue</AppButton></section>
 }
 else if (Details is not null)
 {
@@ -47,15 +47,15 @@ else if (Details is not null)
                 <div class="media-info-actions">
                     @if (MediaType == "tv")
                     {
-                        <button class="button button-light" disabled="@(NextEpisodeToPlay is null)" @onclick="PlayAsync">▶ <span>@PlayButtonLabel</span></button>
+                        <AppButton Variant="light" Disabled="@(NextEpisodeToPlay is null)" OnClick="PlayAsync">▶ <span>@PlayButtonLabel</span></AppButton>
                     }
                     else
                     {
-                        <button class="button button-light" @onclick="PlayAsync">▶ <span>Lecture</span></button>
+                        <AppButton Variant="light" OnClick="PlayAsync">▶ <span>Lecture</span></AppButton>
                     }
                     @if (!string.IsNullOrWhiteSpace(Details.TrailerUrl))
                     {
-                        <button class="button button-glass" @onclick="() => ShowTrailer = true">▷ <span>Voir la bande-annonce</span></button>
+                        <AppButton Variant="glass" OnClick="() => ShowTrailer = true">▷ <span>Voir la bande-annonce</span></AppButton>
                     }
                 </div>
             </div>
@@ -92,7 +92,7 @@ else if (Details is not null)
                                             <div class="episode-progress"><span style="width:@($"{progress.ProgressPercent:0.#}%")"></span></div>
                                             <small>En cours · @progress.ProgressPercent.ToString("0") %</small>
                                         }
-                                        <button class="button button-light episode-play" @onclick="() => PlayEpisode(episode)">▶ <span>@(progress is { IsCompleted: false } ? "Reprendre l’épisode" : "Lire l’épisode")</span></button>
+                                        <AppButton Variant="light" Class="episode-play" OnClick="() => PlayEpisode(episode)">▶ <span>@(progress is { IsCompleted: false } ? "Reprendre l’épisode" : "Lire l’épisode")</span></AppButton>
                                     </div>
                                 </article>
                             }
@@ -114,12 +114,9 @@ else if (Details is not null)
 
 @if (ShowTrailer && Details is not null)
 {
-    <div class="trailer-overlay" role="presentation" @onclick="() => ShowTrailer = false">
-        <section class="trailer-dialog" role="dialog" aria-modal="true" aria-label="Bande-annonce de @Details.Title" @onclick:stopPropagation="true">
-            <button class="download-close" aria-label="Fermer la bande-annonce" @onclick="() => ShowTrailer = false">×</button>
-            <iframe src="@Details.TrailerUrl" title="Bande-annonce de @Details.Title" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
-        </section>
-    </div>
+    <AppModal IsOpen="true" PanelClass="trailer-dialog" PanelStyle="--app-modal-width:1000px;--app-modal-padding:0;--app-modal-background:#000;--app-modal-border:1px solid #45464f;--app-modal-radius:8px;aspect-ratio:16/9" AriaLabel="@($"Bande-annonce de {Details.Title}")" ShowCloseButton="true" OnClose="CloseTrailer">
+            <iframe class="trailer-frame" src="@Details.TrailerUrl" title="Bande-annonce de @Details.Title" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe>
+    </AppModal>
 }
 
 @code {
@@ -130,6 +127,7 @@ else if (Details is not null)
     private bool IsLoading = true;
     private string? ErrorMessage;
     private bool ShowTrailer;
+    private void CloseTrailer() => ShowTrailer = false;
     private int SelectedSeasonNumber;
     private Dictionary<int, List<EpisodeDetails>> EpisodesBySeason = [];
     private List<WatchProgressEntry> EpisodeProgress = [];

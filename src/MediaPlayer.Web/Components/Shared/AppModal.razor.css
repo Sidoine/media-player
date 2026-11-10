@@ -1,0 +1,46 @@
+.app-modal-backdrop {
+    position: fixed;
+    z-index: 2147483000;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    padding: 22px;
+    background: rgba(0,0,0,.78);
+    backdrop-filter: blur(5px);
+}
+
+.app-modal-panel {
+    position: relative;
+    width: min(var(--app-modal-width, 620px), calc(100% - 32px));
+    max-height: 86vh;
+    overflow: auto;
+    margin: auto;
+    padding: var(--app-modal-padding, 25px);
+    border: var(--app-modal-border, 1px solid #383941);
+    border-radius: var(--app-modal-radius, 9px);
+    color: #f4f4f6;
+    background: var(--app-modal-background, linear-gradient(145deg,#191a21,#101116));
+    box-shadow: var(--app-modal-shadow, 0 24px 90px #000b);
+}
+
+.app-modal-close {
+    position: absolute;
+    z-index: 1;
+    top: 15px;
+    right: 15px;
+    width: 34px;
+    height: 34px;
+    border: 0;
+    border-radius: 50%;
+    color: #eee;
+    background: #ffffff12;
+    font-size: 24px;
+    cursor: pointer;
+}
+
+.app-modal-close:focus-visible { outline: 3px solid #fff; outline-offset: 2px; }
+
+@media (max-width: 650px) {
+    .app-modal-backdrop { padding: 14px; }
+    .app-modal-panel { padding: 18px; }
+}

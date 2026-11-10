@@ -1,0 +1,27 @@
+@if (IsOpen)
+{
+    <div class="app-modal-backdrop" @onclick="HandleBackdropClick">
+        <section class="app-modal-panel @PanelClass" style="@PanelStyle" role="@Role" aria-modal="true" aria-label="@AriaLabel" aria-labelledby="@AriaLabelledBy" @onclick:stopPropagation="true">
+            @if (ShowCloseButton)
+            {
+                <button class="app-modal-close" type="button" aria-label="Fermer" @onclick="OnClose">×</button>
+            }
+            @ChildContent
+        </section>
+    </div>
+}
+
+@code {
+    [Parameter] public bool IsOpen { get; set; }
+    [Parameter] public string Role { get; set; } = "dialog";
+    [Parameter] public string? AriaLabel { get; set; }
+    [Parameter] public string? AriaLabelledBy { get; set; }
+    [Parameter] public string? PanelClass { get; set; }
+    [Parameter] public string? PanelStyle { get; set; }
+    [Parameter] public bool ShowCloseButton { get; set; }
+    [Parameter] public bool DismissOnBackdrop { get; set; } = true;
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private Task HandleBackdropClick() => DismissOnBackdrop ? OnClose.InvokeAsync() : Task.CompletedTask;
+}

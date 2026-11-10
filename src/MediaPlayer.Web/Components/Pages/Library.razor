@@ -8,8 +8,7 @@
     <a class="back-link" href="/">← Retour à l’accueil</a>
     <div class="settings-title"><div class="eyebrow">VOTRE COLLECTION</div><h1>Ma bibliothèque</h1><p>Retrouvez et lancez la lecture de vos médias locaux autorisés.</p></div>
 
-    <section class="settings-panel active-downloads-panel">
-        <div class="panel-heading"><div><div class="eyebrow">TRANSFERTS BITTORRENT</div><h2>Téléchargements en cours</h2></div><button class="text-button" @onclick="LoadDownloadsAsync">Actualiser ↻</button></div>
+    <PanelCard Class="active-downloads-panel" Eyebrow="TRANSFERTS BITTORRENT" Title="Téléchargements en cours" HeaderActionLabel="Actualiser ↻" OnHeaderAction="LoadDownloadsAsync">
         @if (IsLoadingDownloads)
         {
             <div class="empty-state compact"><strong>Lecture des téléchargements…</strong></div>
@@ -28,7 +27,7 @@
                         <div class="download-progress"><span style="width:@($"{download.Progress:0.##}%")"></span></div>
                         <small>@download.Progress.ToString("0.0") % · @FormatRate(download.DownloadRate) · @download.AvailablePeers pairs · @download.TrackerCount trackers · DHT @download.DhtState</small>
                         <div class="active-download-actions">
-                            @if (download.CanStream) { <a class="button button-light" href="@DownloadPlaybackUrl(download)">▶ Lire maintenant</a> }
+                            @if (download.CanStream) { <AppButton Variant="light" Href="@DownloadPlaybackUrl(download)">▶ Lire maintenant</AppButton> }
                             <button class="remove-button" disabled="@(CancelingKey == DownloadKey(download))" @onclick="() => CancelDownloadAsync(download)">@(CancelingKey == DownloadKey(download) ? "Annulation…" : "Annuler")</button>
                         </div>
                     </div>
@@ -36,10 +35,9 @@
             </div>
         }
         @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message">@DownloadMessage</div> }
-    </section>
+    </PanelCard>
 
-    <section class="settings-panel">
-        <div class="panel-heading"><div><div class="eyebrow">SURVEILLANCE DES INDEXEURS</div><h2>À surveiller</h2></div><button class="text-button" @onclick="LoadWatchlistAsync">Actualiser ↻</button></div>
+    <PanelCard Eyebrow="SURVEILLANCE DES INDEXEURS" Title="À surveiller" HeaderActionLabel="Actualiser ↻" OnHeaderAction="LoadWatchlistAsync">
         @if (Watchlist.Count == 0)
         {
             <div class="empty-state compact"><strong>Aucun média surveillé</strong><p>Ajoutez un film ou un épisode quand aucune source n’est disponible.</p></div>
@@ -57,10 +55,9 @@
                 }
             </div>
         }
-    </section>
+    </PanelCard>
 
-    <section class="settings-panel">
-        <div class="panel-heading"><div><div class="eyebrow">FICHIERS LOCAUX</div><h2>Vos médias</h2></div><button class="text-button" @onclick="LoadLibraryAsync">Actualiser ↻</button></div>
+    <PanelCard Eyebrow="FICHIERS LOCAUX" Title="Vos médias" HeaderActionLabel="Actualiser ↻" OnHeaderAction="LoadLibraryAsync">
         @if (IsLoading)
         {
             <div class="empty-state compact"><strong>Lecture de la bibliothèque…</strong></div>
@@ -92,15 +89,13 @@
                 }
             </div>
         }
-    </section>
+    </PanelCard>
 
     @if (PropertiesFile is not null)
     {
-        <div class="library-delete-backdrop" role="presentation">
-            <section class="library-properties-dialog" role="dialog" aria-modal="true" aria-labelledby="properties-title">
+        <AppModal IsOpen="true" PanelClass="library-properties-dialog" PanelStyle="--app-modal-width:620px;--app-modal-padding:25px;--app-modal-background:#17181e;--app-modal-border:1px solid #34353d;--app-modal-radius:8px;--app-modal-shadow:0 20px 70px #000a" AriaLabelledBy="properties-title" ShowCloseButton="true" DismissOnBackdrop="false" OnClose="CloseProperties">
                 <header class="library-properties-heading">
                     <h2 id="properties-title">Propriétés</h2>
-                    <button class="download-close" aria-label="Fermer" @onclick="CloseProperties">×</button>
                 </header>
                 @if (IsLoadingProperties)
                 {
@@ -121,23 +116,20 @@
                 {
                     <div class="inline-message error">@(PropertiesError ?? "Les propriétés du fichier sont indisponibles.")</div>
                 }
-            </section>
-        </div>
+        </AppModal>
     }
 
     @if (PendingDelete is not null)
     {
-        <div class="library-delete-backdrop" role="presentation">
-            <section class="library-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-title">
+        <AppModal IsOpen="true" Role="alertdialog" PanelClass="library-delete-dialog" PanelStyle="--app-modal-width:430px;--app-modal-padding:24px;--app-modal-background:#17181e;--app-modal-border:1px solid #34353d;--app-modal-radius:8px;--app-modal-shadow:0 20px 70px #000a" AriaLabelledBy="delete-title" DismissOnBackdrop="false">
                 <h2 id="delete-title">Supprimer ce fichier ?</h2>
                 <p>@PendingDelete.Name</p>
                 @if (!string.IsNullOrWhiteSpace(DeleteMessage)) { <div class="inline-message error">@DeleteMessage</div> }
                 <div class="library-delete-actions">
-                    <button class="button button-glass" @onclick="CancelDelete" disabled="@IsDeleting">Annuler</button>
-                    <button class="button button-red" @onclick="DeleteFileAsync" disabled="@IsDeleting">@(IsDeleting ? "Suppression…" : "Supprimer")</button>
+                    <AppButton Variant="glass" Class="compact" OnClick="CancelDelete" Disabled="@IsDeleting">Annuler</AppButton>
+                    <AppButton Variant="red" Class="compact" OnClick="DeleteFileAsync" Disabled="@IsDeleting">@(IsDeleting ? "Suppression…" : "Supprimer")</AppButton>
                 </div>
-            </section>
-        </div>
+        </AppModal>
     }
 </div>
 

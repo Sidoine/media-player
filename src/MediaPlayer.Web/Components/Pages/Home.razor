@@ -24,8 +24,8 @@
         <div class="hero-actions">
             @if (Featured is not null)
             {
-                <button class="button button-light" @onclick="() => SelectFeature(Featured)">▶ <span>Lecture</span></button>
-                <a class="button button-glass" href="@($"/infos/{Featured.MediaType ?? "movie"}/{Featured.Id}")">ⓘ <span>Plus d’infos</span></a>
+                <AppButton Variant="light" OnClick="() => SelectFeature(Featured)">▶ <span>Lecture</span></AppButton>
+                <AppButton Variant="glass" Href="@($"/infos/{Featured.MediaType ?? "movie"}/{Featured.Id}")">ⓘ <span>Plus d’infos</span></AppButton>
             }
         </div>
     </div>

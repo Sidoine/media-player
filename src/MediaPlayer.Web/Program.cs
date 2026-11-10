@@ -8,6 +8,7 @@ var playwrightMode = builder.Environment.IsEnvironment("Playwright") || builder.
 builder.Services.AddSingleton<TorrentCatalogStore>();
 builder.Services.AddSingleton<SelectedIndexerStore>();
 builder.Services.AddSingleton<BittorrentTrackerStore>();
+builder.Services.AddSingleton<MediaStorageSettingsStore>();
 builder.Services.AddSingleton<MediaDownloadService>();
 builder.Services.AddSingleton<WatchProgressStore>();
 builder.Services.AddSingleton<TorrentCatalogSearchService>();
@@ -61,6 +62,54 @@ app.MapPut("/api/configuration/credentials", async (ApiCredentialsInput input, A
 {
     await credentials.SaveLocalAsync(input.TmdbReadAccessToken, input.OpenSubtitlesApiKey, ct);
     return Results.Json(credentials.GetStatus());
+});
+app.MapGet("/api/configuration/media", (MediaStorageSettingsStore settings, MediaDownloadService downloads) =>
+{
+    var value = settings.Current;
+    return Results.Json(new
+    {
+        cacheRoot = value.CacheRoot,
+        activeCacheRoot = downloads.CacheRoot,
+        cacheMaxBytes = value.CacheMaxBytes,
+        usedBytes = downloads.GetStorageUsedBytes(),
+        shareRatioLimit = value.ShareRatioLimit,
+        requiresRestart = !string.Equals(Path.GetFullPath(value.CacheRoot), Path.GetFullPath(downloads.CacheRoot), StringComparison.OrdinalIgnoreCase)
+    });
+});
+app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, MediaStorageSettingsStore settings, MediaDownloadService downloads, IWebHostEnvironment environment, CancellationToken ct) =>
+{
+    if (string.IsNullOrWhiteSpace(input.CacheRoot)) return Results.BadRequest(new { error = "Indiquez le dossier de stockage des médias." });
+    if (input.CacheMaxBytes < 100L * 1024 * 1024 || input.CacheMaxBytes > 10L * 1024 * 1024 * 1024 * 1024)
+        return Results.BadRequest(new { error = "Le quota doit être compris entre 100 Mo et 10 To." });
+    if (input.ShareRatioLimit is double ratio && (!double.IsFinite(ratio) || ratio < 0 || ratio > 1000))
+        return Results.BadRequest(new { error = "Le ratio doit être compris entre 0 et 1000, ou choisir le partage sans limite." });
+
+    string cacheRoot;
+    try
+    {
+        cacheRoot = Path.GetFullPath(Path.IsPathRooted(input.CacheRoot)
+            ? input.CacheRoot.Trim() : Path.Combine(environment.ContentRootPath, input.CacheRoot.Trim()));
+        Directory.CreateDirectory(cacheRoot);
+        var probe = Path.Combine(cacheRoot, $".mediaplayer-write-test-{Guid.NewGuid():N}");
+        await using (File.Create(probe)) { }
+        File.Delete(probe);
+    }
+    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+    {
+        return Results.BadRequest(new { error = "Le dossier choisi ne peut pas être utilisé par le serveur." });
+    }
+
+    var saved = await settings.SaveAsync(new MediaStorageSettings(cacheRoot, input.CacheMaxBytes, input.ShareRatioLimit), ct);
+    await downloads.ApplySharingPolicyAsync(ct);
+    return Results.Json(new
+    {
+        cacheRoot = saved.CacheRoot,
+        activeCacheRoot = downloads.CacheRoot,
+        cacheMaxBytes = saved.CacheMaxBytes,
+        usedBytes = downloads.GetStorageUsedBytes(),
+        shareRatioLimit = saved.ShareRatioLimit,
+        requiresRestart = !string.Equals(Path.GetFullPath(saved.CacheRoot), Path.GetFullPath(downloads.CacheRoot), StringComparison.OrdinalIgnoreCase)
+    });
 });
 
 app.MapGet("/api/indexer-definitions/status", (IndexerDefinitionCacheService cache, CancellationToken ct) => cache.GetStatusAsync(ct));
@@ -281,10 +330,12 @@ app.MapPost("/api/torrent-catalogs", async (TorrentCatalogInput input, TorrentCa
 });
 app.MapDelete("/api/torrent-catalogs/{id:guid}", async (Guid id, TorrentCatalogStore store, CancellationToken ct) =>
     await store.Remove(id, ct) ? Results.NoContent() : Results.NotFound());
-app.MapGet("/api/torrent-catalogs/search", async (string query, TorrentCatalogSearchService search, CancellationToken ct) =>
+app.MapGet("/api/torrent-catalogs/search", async (string query, string? sourceType, Guid? sourceId, TorrentCatalogSearchService search, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(query) || query.Length > 200) return Results.BadRequest(new { error = "Saisissez un titre (200 caractères maximum)." });
-    return Results.Json(await search.SearchAsync(query, ct));
+    if (sourceType is not null && (sourceType is not ("torznab" or "cardigann") || sourceId is null))
+        return Results.BadRequest(new { error = "L’indexeur à tester est invalide." });
+    return Results.Json(await search.SearchAsync(query, ct, sourceType, sourceId));
 });
 app.MapGet("/api/catalog/indexer-popular", async (IndexerPopularityService popular, CancellationToken ct) =>
     Results.Json(await popular.GetSnapshotAsync(ct)));
@@ -517,6 +568,7 @@ record TorrentCatalogInput(string Name, string Url, string ApiKey, bool RightsCo
 record TrackerInput(List<string> Urls);
 record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
 record ApiCredentialsInput(string? TmdbReadAccessToken, string? OpenSubtitlesApiKey);
+record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit);
 public record TorrentCatalogSource(Guid Id, string Name, string Url, string ApiKey, bool RightsConfirmed, DateTimeOffset AddedAt);
 record LibraryItem(string Name, string Path);
 

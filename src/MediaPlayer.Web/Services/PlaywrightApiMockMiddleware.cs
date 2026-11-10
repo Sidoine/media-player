@@ -47,6 +47,10 @@ public sealed class PlaywrightApiMockMiddleware(RequestDelegate next)
         var method = context.Request.Method;
         if (path == "/configuration/credentials" && method == HttpMethods.Get)
             return new { tmdbConfigured = true, tmdbSource = "local", openSubtitlesConfigured = true, openSubtitlesSource = "local", allConfigured = true };
+        if (path == "/configuration/media" && method == HttpMethods.Get)
+            return new { cacheRoot = "C:\\mock\\media", activeCacheRoot = "C:\\mock\\media", cacheMaxBytes = 536870912000L, usedBytes = 0L, shareRatioLimit = (double?)1, requiresRestart = false };
+        if (path == "/configuration/media" && method == HttpMethods.Put)
+            return new MockResponse(StatusCodes.Status200OK, "{\"cacheRoot\":\"C:\\\\mock\\\\media\",\"activeCacheRoot\":\"C:\\\\mock\\\\media\",\"cacheMaxBytes\":536870912000,\"usedBytes\":0,\"shareRatioLimit\":1,\"requiresRestart\":false}");
         if (path == "/bittorrent/trackers" && method == HttpMethods.Get) return new { urls = Array.Empty<string>() };
         if (path == "/indexer-definitions/status") return new { available = true, definitionCount = 1, fetchedAtUtc = UpdatedAt, archiveSha256 = "fixture", sourceUrl = "mock://indexers", definitionVersion = "playwright" };
         if (path == "/indexer-definitions" || path == "/selected-indexers" || path == "/torrent-catalogs" || path == "/downloads" || path == "/watchlist")

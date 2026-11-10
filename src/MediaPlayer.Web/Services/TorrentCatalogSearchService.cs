@@ -8,11 +8,12 @@ public sealed class TorrentCatalogSearchService(
     CardigannSearchService cardigann,
     IHttpClientFactory clients)
 {
-    public async Task<TorrentSearchResponse> SearchAsync(string query, CancellationToken ct)
+    public async Task<TorrentSearchResponse> SearchAsync(string query, CancellationToken ct, string? sourceType = null, Guid? sourceId = null)
     {
         var results = new List<TorrentSearchResult>();
         var errors = new List<string>();
-        foreach (var source in await catalogs.GetAll(ct))
+        var torznabSources = await catalogs.GetAll(ct);
+        foreach (var source in torznabSources.Where(source => sourceType is null or "torznab" && (sourceId is null || source.Id == sourceId)))
         {
             try
             {
@@ -42,7 +43,12 @@ public sealed class TorrentCatalogSearchService(
             }
         }
 
-        var cardigannResponse = await cardigann.SearchAsync(await selectedIndexers.GetAllAsync(ct), query, ct);
+        var cardigannSources = await selectedIndexers.GetAllAsync(ct);
+        if (sourceType is "cardigann" && sourceId is not null)
+            cardigannSources = cardigannSources.Where(source => source.Id == sourceId).ToList();
+        else if (sourceType is "torznab")
+            cardigannSources = [];
+        var cardigannResponse = await cardigann.SearchAsync(cardigannSources, query, ct);
         results.AddRange(cardigannResponse.Results.Select(result => new TorrentSearchResult(result.Source, result.Title, result.Link,
             result.Size, result.Seeders, result.Leechers, result.Category, result.Grabs, result.RightsConfirmed)));
         errors.AddRange(cardigannResponse.Errors);

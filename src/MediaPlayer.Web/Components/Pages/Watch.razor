@@ -23,9 +23,9 @@
             {
                 <p>Surveillez ce média : les indexeurs seront vérifiés automatiquement.</p>
                 @if (IsOnWatchlist) { <small>Ajouté à la liste « À surveiller ».</small> }
-                else { <button class="button button-light" disabled="@IsAddingToWatchlist" @onclick="AddToWatchlistAsync">@(IsAddingToWatchlist ? "Ajout…" : "＋ À surveiller")</button> }
+                else { <AppButton Variant="light" Disabled="@IsAddingToWatchlist" OnClick="AddToWatchlistAsync">@(IsAddingToWatchlist ? "Ajout…" : "＋ À surveiller")</AppButton> }
             }
-            <div class="watch-status-actions"><a class="button button-light" href="@MediaInfoUrl">← Retour à la fiche</a><a class="button button-glass" href="/bibliotheque">Ma bibliothèque</a></div>
+            <div class="watch-status-actions"><AppButton Variant="light" Href="@MediaInfoUrl">← Retour à la fiche</AppButton><AppButton Variant="glass" Href="/bibliotheque">Ma bibliothèque</AppButton></div>
         </section>
     }
     else if (Choices.Count > 0 && Download is null)
@@ -60,9 +60,9 @@
             <small>Téléchargement : @Download.Progress.ToString("0.0") % · @Download.AvailablePeers pairs · @FormatRate(Download.DownloadRate)</small>
             <p>@Download.SourceTitle</p>
             @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message error">@DownloadMessage</div> }
-            <button class="button button-glass" disabled="@IsCancellingDownload" @onclick="CancelDownloadAsync">
+            <AppButton Variant="glass" Disabled="@IsCancellingDownload" OnClick="CancelDownloadAsync">
                 @(IsCancellingDownload ? "Annulation…" : "Annuler le téléchargement")
-            </button>
+            </AppButton>
         </section>
     }
     else if (!string.IsNullOrWhiteSpace(StreamUrl))

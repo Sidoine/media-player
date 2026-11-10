@@ -1,0 +1,36 @@
+<section class="settings-panel @Class" id="@Id" aria-labelledby="@HeadingId">
+    <header class="panel-heading">
+        <div>
+            @if (!string.IsNullOrWhiteSpace(Eyebrow)) { <div class="eyebrow">@Eyebrow</div> }
+            <h2 id="@HeadingId">@Title</h2>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(HeaderNote) || !string.IsNullOrWhiteSpace(HeaderActionLabel))
+        {
+            <div class="panel-heading-actions">
+                @if (!string.IsNullOrWhiteSpace(HeaderNote)) { <span class="source-count">@HeaderNote</span> }
+                @if (!string.IsNullOrWhiteSpace(HeaderActionLabel))
+                {
+                    <button type="button" class="text-button" disabled="@HeaderActionDisabled" @onclick="OnHeaderAction">@HeaderActionLabel</button>
+                }
+            </div>
+        }
+    </header>
+    @if (!string.IsNullOrWhiteSpace(Description)) { <p class="section-intro">@Description</p> }
+    @ChildContent
+</section>
+
+@code {
+    private readonly string generatedHeadingId = $"panel-{Guid.NewGuid():N}";
+    private string HeadingId => string.IsNullOrWhiteSpace(Id) ? generatedHeadingId : $"{Id}-heading";
+
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter, EditorRequired] public string Title { get; set; } = "";
+    [Parameter] public string? Eyebrow { get; set; }
+    [Parameter] public string? Description { get; set; }
+    [Parameter] public string? HeaderNote { get; set; }
+    [Parameter] public string? HeaderActionLabel { get; set; }
+    [Parameter] public bool HeaderActionDisabled { get; set; }
+    [Parameter] public EventCallback OnHeaderAction { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+}

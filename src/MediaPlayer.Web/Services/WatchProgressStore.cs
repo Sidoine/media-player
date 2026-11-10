@@ -3,9 +3,10 @@ using System.Text.Json;
 
 namespace media_player.Services;
 
-public sealed class WatchProgressStore(MediaDownloadService downloads, ILogger<WatchProgressStore> logger)
+public sealed class WatchProgressStore(MediaDownloadService downloads, IWebHostEnvironment environment, ILogger<WatchProgressStore> logger)
 {
-    private readonly string filePath = Path.Combine(downloads.CacheRoot, "watch-progress.json");
+    private readonly string filePath = Path.Combine(environment.ContentRootPath, "App_Data", "watch-progress.json");
+    private readonly string legacyFilePath = Path.Combine(downloads.CacheRoot, "watch-progress.json");
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly ConcurrentDictionary<string, WatchProgressEntry> entries = new(StringComparer.OrdinalIgnoreCase);
     private bool loaded;
@@ -88,10 +89,11 @@ public sealed class WatchProgressStore(MediaDownloadService downloads, ILogger<W
     {
         if (loaded) return;
         loaded = true;
-        if (!File.Exists(filePath)) return;
+        var sourcePath = File.Exists(filePath) ? filePath : legacyFilePath;
+        if (!File.Exists(sourcePath)) return;
         try
         {
-            await using var stream = File.OpenRead(filePath);
+            await using var stream = File.OpenRead(sourcePath);
             var saved = await JsonSerializer.DeserializeAsync<List<WatchProgressEntry>>(stream, cancellationToken: ct) ?? [];
             foreach (var item in saved.Where(item => item.TmdbId > 0 && double.IsFinite(item.CurrentTimeSeconds)
                 && double.IsFinite(item.DurationSeconds) && item.DurationSeconds > 0))
