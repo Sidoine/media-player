@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="MediaPlayer.AndroidTv.MainPage"
+             BackgroundColor="#090A0E">
+    <Grid RowDefinitions="58,*" BackgroundColor="#090A0E">
+        <Grid Grid.Row="0" Padding="28,0" ColumnDefinitions="*,Auto" BackgroundColor="#101116">
+            <Label Text="MEDIA PLAYER" TextColor="#F0141E" FontAttributes="Bold" FontSize="19" VerticalOptions="Center" />
+            <Button x:Name="ChangeServerButton" Grid.Column="1" Text="Changer de serveur" Clicked="OnChangeServerClicked"
+                    BackgroundColor="#24252D" TextColor="White" CornerRadius="6" Padding="18,6" FontSize="14" IsVisible="False" />
+        </Grid>
+
+        <WebView x:Name="Browser" Grid.Row="1" IsVisible="False" Navigated="OnBrowserNavigated" />
+
+        <Grid x:Name="ConnectionPanel" Grid.RowSpan="2" Padding="48,32" RowDefinitions="*,Auto,*" IsVisible="True">
+            <VerticalStackLayout Grid.Row="1" Spacing="18" MaximumWidthRequest="760" HorizontalOptions="Center">
+                <Label Text="Votre cinéma, sur Google TV" TextColor="White" FontSize="34" FontAttributes="Bold"
+                       SemanticProperties.HeadingLevel="Level1" />
+                <Label Text="Saisissez l’adresse du serveur MediaPlayer sur votre réseau local. Exemple : http://192.168.1.25:5102"
+                       TextColor="#B8BAC2" FontSize="18" LineBreakMode="WordWrap" />
+                <Entry x:Name="ServerAddress" Placeholder="http://adresse-du-PC:5102" Keyboard="Url"
+                       TextColor="White" PlaceholderColor="#7F818B" BackgroundColor="#17181F" FontSize="20"
+                       ReturnType="Go" Completed="OnConnectClicked" />
+                <Label x:Name="ConnectionError" TextColor="#FF8C92" FontSize="16" IsVisible="False" />
+                <Button x:Name="ConnectButton" Text="Se connecter" Clicked="OnConnectClicked"
+                        BackgroundColor="#E50914" TextColor="White" FontAttributes="Bold" FontSize="18"
+                        HeightRequest="58" CornerRadius="6" HorizontalOptions="Start" MinimumWidthRequest="230" />
+            </VerticalStackLayout>
+            <Label Grid.Row="2" Text="Le PC et Google TV doivent être connectés au même réseau."
+                   TextColor="#777984" FontSize="14" HorizontalOptions="Center" VerticalOptions="End" Margin="0,0,0,12" />
+        </Grid>
+    </Grid>
+</ContentPage>

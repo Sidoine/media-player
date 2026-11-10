@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/src/">
+    <Project Path="src/MediaPlayer.AndroidTv/MediaPlayer.AndroidTv.csproj" />
     <Project Path="src/MediaPlayer.Web/MediaPlayer.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
