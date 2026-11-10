@@ -16,4 +16,8 @@
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="IndexerDefinitions\**\*.yml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

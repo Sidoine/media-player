@@ -115,6 +115,7 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
 app.MapGet("/api/indexer-definitions/status", (IndexerDefinitionCacheService cache, CancellationToken ct) => cache.GetStatusAsync(ct));
 app.MapPost("/api/indexer-definitions/refresh", (IndexerDefinitionCacheService cache, CancellationToken ct) => cache.RefreshAsync(ct));
 app.MapGet("/api/indexer-definitions", (IndexerDefinitionCacheService cache, string? query, CancellationToken ct) => cache.GetDefinitionsAsync(query, ct));
+app.MapGet("/api/indexer-definitions/internal", (IndexerDefinitionCacheService cache, string? query, CancellationToken ct) => cache.GetBundledDefinitionsAsync(query, ct));
 app.MapGet("/api/bittorrent/trackers", async (BittorrentTrackerStore trackers, CancellationToken ct) => Results.Json(new { urls = await trackers.GetAllAsync(ct) }));
 app.MapPut("/api/bittorrent/trackers", async (TrackerInput input, BittorrentTrackerStore trackers, CancellationToken ct) =>
 {

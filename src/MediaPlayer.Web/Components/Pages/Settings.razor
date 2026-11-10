@@ -51,8 +51,8 @@
         @if (CredentialStatus is not null) { <p class="credential-status">TMDB : @CredentialSourceLabel(CredentialStatus.TmdbSource) · OpenSubtitles : @CredentialSourceLabel(CredentialStatus.OpenSubtitlesSource)</p> }
     </PanelCard>
 
-    <PanelCard Id="indexes" Eyebrow="RECHERCHE DE MÉDIAS" Title="Indexeurs" HeaderNote="@($"{Sources.Count + SelectedIndexers.Count} indexeur(s)")" Description="Gérez ici toutes les sources de recherche. Ajoutez un indexeur Torznab ou choisissez une définition Cardigann.">
-        <div class="index-actions"><AppButton Variant="light" OnClick='() => OpenIndexerModal("torznab")'>Ajouter un index Torznab ＋</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModal("cardigann")'>Ajouter un index Cardigann ＋</AppButton></div>
+    <PanelCard Id="indexes" Eyebrow="RECHERCHE DE MÉDIAS" Title="Indexeurs" HeaderNote="@($"{Sources.Count + SelectedIndexers.Count} indexeur(s)")" Description="Gérez les sources de recherche, les définitions Cardigann et les indexeurs intégrés à l’application.">
+        <div class="index-actions"><AppButton Variant="light" OnClick='() => OpenIndexerModal("torznab")'>Ajouter un index Torznab ＋</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModalAsync("cardigann")'>Ajouter un index Cardigann ＋</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModalAsync("internal")'>Ajouter un index interne ＋</AppButton></div>
         @if (!string.IsNullOrWhiteSpace(SourceMessage)) { <div class="inline-message">@SourceMessage</div> }
         @if (!string.IsNullOrWhiteSpace(DefinitionMessage)) { <div class="inline-message">@DefinitionMessage</div> }
         <div class="source-list">
@@ -68,7 +68,7 @@
             {
                 var testKey = $"cardigann-{source.Id}";
                 <div class="indexer-entry" @key="source.Id">
-                    <div class="source-row"><span class="source-mark">✦</span><div class="source-info"><strong>@source.Name</strong><small>Cardigann · @source.DefinitionId</small></div><span class="source-ok">Droits attestés</span><button class="text-button" disabled="@(TestingIndexerKey == testKey)" @onclick='() => TestIndexerAsync("cardigann", source.Id, source.Name)'>@(TestingIndexerKey == testKey ? "Test…" : "Tester")</button><button class="remove-button" title="Retirer l’indexeur" @onclick="() => RemoveSelectedIndexerAsync(source.Id)">Retirer</button></div>
+                    <div class="source-row"><span class="source-mark">✦</span><div class="source-info"><strong>@source.Name</strong><small>@(source.DefinitionId == "knaben" ? "Index interne · " : "Cardigann · ")@source.DefinitionId</small></div><span class="source-ok">Droits attestés</span><button class="text-button" disabled="@(TestingIndexerKey == testKey)" @onclick='() => TestIndexerAsync("cardigann", source.Id, source.Name)'>@(TestingIndexerKey == testKey ? "Test…" : "Tester")</button><button class="remove-button" title="Retirer l’indexeur" @onclick="() => RemoveSelectedIndexerAsync(source.Id)">Retirer</button></div>
                     @if (IndexerTestMessages.TryGetValue(testKey, out var cardigannTest)) { <div class="indexer-test-result">@cardigannTest</div> }
                 </div>
             }
@@ -79,7 +79,7 @@
     @if (IndexerModalType is not null)
     {
             <AppModal IsOpen="true" PanelClass="indexer-modal" AriaLabelledBy="indexer-modal-title" ShowCloseButton="true" OnClose="CloseIndexerModal">
-                <div class="indexer-modal-heading"><div><div class="eyebrow">NOUVEL INDEXEUR</div><h2 id="indexer-modal-title">@(IndexerModalType == "torznab" ? "Configurer un index Torznab" : "Ajouter un index Cardigann")</h2></div></div>
+                <div class="indexer-modal-heading"><div><div class="eyebrow">NOUVEL INDEXEUR</div><h2 id="indexer-modal-title">@(IndexerModalType == "torznab" ? "Configurer un index Torznab" : IndexerModalType == "internal" ? "Ajouter un index interne" : "Ajouter un index Cardigann")</h2></div></div>
                 @if (IndexerModalType == "torznab")
                 {
                     <p class="section-intro">Renseignez l’adresse API Torznab et sa clé d’accès.</p>
@@ -93,14 +93,14 @@
                 }
                 else
                 {
-                    <p class="section-intro">Recherchez une définition Cardigann dans le catalogue local, puis ajoutez-la à votre liste d’indexeurs.</p>
+                    <p class="section-intro">@(IndexerModalType == "internal" ? "Choisissez un indexeur fourni directement avec l’application." : "Recherchez une définition Cardigann dans le catalogue externe, puis ajoutez-la à votre liste d’indexeurs.")</p>
                     <form class="definition-picker" @onsubmit="SearchDefinitionsAsync" @onsubmit:preventDefault>
                         <input @bind="DefinitionQuery" placeholder="Filtrer les indexeurs par nom…" aria-label="Filtrer les définitions d’indexeurs" />
                         <AppButton Variant="glass" Class="compact" Type="submit" Disabled="@IsLoadingDefinitions">@(IsLoadingDefinitions ? "Chargement…" : "Filtrer")</AppButton>
                     </form>
                     <div class="definition-add-row">
                         <select @bind="SelectedDefinitionId" aria-label="Définition à sélectionner">
-                            <option value="">Choisir parmi @DefinitionCountText…</option>
+                            <option value="">@(IndexerModalType == "internal" ? "Choisir un index interne…" : $"Choisir parmi {DefinitionCountText}…")</option>
                             @foreach (var definition in Definitions) { <option value="@definition.Id">@definition.Name · @definition.AccessType</option> }
                         </select>
                         <AppButton Variant="light" Class="compact" Disabled="@(string.IsNullOrWhiteSpace(SelectedDefinitionId) || !DefinitionRightsConfirmed || IsAddingDefinition)" OnClick="AddSelectedIndexerAsync">@(IsAddingDefinition ? "Ajout…" : "Ajouter l’index")</AppButton>
@@ -108,7 +108,7 @@
                     <label class="rights-check definition-consent"><input @bind="DefinitionRightsConfirmed" type="checkbox" /> Je confirme disposer des droits nécessaires pour les médias de cette source.</label>
                 }
                 @if (IndexerModalType == "torznab" && !string.IsNullOrWhiteSpace(SourceMessage)) { <div class="inline-message">@SourceMessage</div> }
-                @if (IndexerModalType == "cardigann" && !string.IsNullOrWhiteSpace(DefinitionMessage)) { <div class="inline-message">@DefinitionMessage</div> }
+                @if ((IndexerModalType is "cardigann" or "internal") && !string.IsNullOrWhiteSpace(DefinitionMessage)) { <div class="inline-message">@DefinitionMessage</div> }
             </AppModal>
     }
 
@@ -204,6 +204,15 @@
     {
         IndexerModalType = type;
         SourceMessage = DefinitionMessage = null;
+    }
+
+    private async Task OpenIndexerModalAsync(string type)
+    {
+        IndexerModalType = type;
+        SourceMessage = DefinitionMessage = null;
+        DefinitionQuery = "";
+        SelectedDefinitionId = "";
+        await LoadDefinitionsAsync(type == "internal");
     }
 
     private void CloseIndexerModal() => IndexerModalType = null;
@@ -329,10 +338,10 @@
         finally { CacheBusy = false; }
     }
 
-    private async Task LoadDefinitionsAsync()
+    private async Task LoadDefinitionsAsync(bool internalDefinitions = false)
     {
         IsLoadingDefinitions = true;
-        try { Definitions = await Http.GetFromJsonAsync<List<DefinitionItem>>("/api/indexer-definitions") ?? []; }
+        try { Definitions = await Http.GetFromJsonAsync<List<DefinitionItem>>(internalDefinitions ? "/api/indexer-definitions/internal" : "/api/indexer-definitions") ?? []; }
         catch (HttpRequestException) { DefinitionMessage = "Impossible de lire les définitions locales."; }
         finally { IsLoadingDefinitions = false; }
     }
@@ -341,7 +350,8 @@
     {
         IsLoadingDefinitions = true;
         DefinitionMessage = null;
-        try { Definitions = await Http.GetFromJsonAsync<List<DefinitionItem>>($"/api/indexer-definitions?query={Uri.EscapeDataString(DefinitionQuery)}") ?? []; }
+        var endpoint = IndexerModalType == "internal" ? "/api/indexer-definitions/internal" : "/api/indexer-definitions";
+        try { Definitions = await Http.GetFromJsonAsync<List<DefinitionItem>>($"{endpoint}?query={Uri.EscapeDataString(DefinitionQuery)}") ?? []; }
         catch (HttpRequestException) { DefinitionMessage = "Impossible de filtrer les définitions locales."; }
         finally { IsLoadingDefinitions = false; }
     }

@@ -89,7 +89,9 @@ public sealed class CardigannSearchService(
         using var document = JsonDocument.Parse(content);
         var rows = document.RootElement.ValueKind == JsonValueKind.Array
             ? document.RootElement.EnumerateArray()
-            : document.RootElement.ValueKind == JsonValueKind.Object && document.RootElement.TryGetProperty("results", out var items) && items.ValueKind == JsonValueKind.Array
+            : document.RootElement.ValueKind == JsonValueKind.Object
+                && (document.RootElement.TryGetProperty("results", out var items) || document.RootElement.TryGetProperty("hits", out items))
+                && items.ValueKind == JsonValueKind.Array
                 ? items.EnumerateArray()
                 : Enumerable.Empty<JsonElement>();
         foreach (var row in rows)

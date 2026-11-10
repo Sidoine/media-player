@@ -10,11 +10,13 @@ public sealed class IndexerDefinitionCacheService(
     HttpClient http,
     string cacheRoot,
     TimeSpan refreshInterval,
-    ILogger<IndexerDefinitionCacheService> logger) : IHostedService
+    ILogger<IndexerDefinitionCacheService> logger,
+    string? bundledDefinitionsPath = null) : IHostedService
 {
     private const string ArchiveUrl = "https://codeload.github.com/Prowlarr/Indexers/zip/refs/heads/master";
     private const string SourceUrl = "https://github.com/Prowlarr/Indexers/tree/master/definitions/v11";
     private readonly string definitionsPath = Path.Combine(cacheRoot, "v11");
+    private readonly string bundledPath = bundledDefinitionsPath ?? Path.Combine(AppContext.BaseDirectory, "IndexerDefinitions");
     private readonly string manifestPath = Path.Combine(cacheRoot, "manifest.json");
     private readonly SemaphoreSlim refreshGate = new(1, 1);
     private CancellationTokenSource? backgroundRefreshCancellation;
@@ -146,9 +148,10 @@ public sealed class IndexerDefinitionCacheService(
 
     public async Task<IReadOnlyList<IndexerDefinitionSummary>> GetDefinitionsAsync(string? query = null, CancellationToken cancellationToken = default)
     {
-        if (!Directory.Exists(definitionsPath)) return [];
         var summaries = new List<IndexerDefinitionSummary>();
-        foreach (var path in Directory.EnumerateFiles(definitionsPath, "*.yml", SearchOption.TopDirectoryOnly))
+        foreach (var path in Directory.Exists(definitionsPath)
+            ? Directory.EnumerateFiles(definitionsPath, "*.yml", SearchOption.TopDirectoryOnly)
+            : [])
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -181,10 +184,44 @@ public sealed class IndexerDefinitionCacheService(
         return result.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
+    public async Task<IReadOnlyList<IndexerDefinitionSummary>> GetBundledDefinitionsAsync(string? query = null, CancellationToken cancellationToken = default)
+    {
+        if (!Directory.Exists(bundledPath)) return [];
+        var summaries = new List<IndexerDefinitionSummary>();
+        foreach (var path in Directory.EnumerateFiles(bundledPath, "*.yml", SearchOption.TopDirectoryOnly))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            try
+            {
+                using var reader = File.OpenText(path);
+                var stream = new YamlStream();
+                stream.Load(reader);
+                if (stream.Documents.FirstOrDefault()?.RootNode is not YamlMappingNode root) continue;
+                var id = Scalar(root, "id") ?? Path.GetFileNameWithoutExtension(path);
+                var name = Scalar(root, "name") ?? id;
+                summaries.Add(new IndexerDefinitionSummary(id, name, Scalar(root, "description"), Scalar(root, "language"),
+                    Scalar(root, "type"), FirstSequenceScalar(root, "links")));
+            }
+            catch (Exception ex) when (ex is IOException or YamlException or InvalidOperationException)
+            {
+                logger.LogDebug(ex, "Skipping invalid bundled indexer definition {DefinitionFile}.", Path.GetFileName(path));
+            }
+        }
+
+        IEnumerable<IndexerDefinitionSummary> result = summaries;
+        if (!string.IsNullOrWhiteSpace(query))
+            result = result.Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || item.Id.Contains(query, StringComparison.OrdinalIgnoreCase)
+                || (item.Description?.Contains(query, StringComparison.OrdinalIgnoreCase) ?? false));
+        return result.OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     public async Task<string?> GetDefinitionYamlAsync(string id, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(id) || id.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '-')) return null;
         var path = Path.Combine(definitionsPath, $"{id}.yml");
+        if (File.Exists(path)) return await File.ReadAllTextAsync(path, cancellationToken);
+        path = Path.Combine(bundledPath, $"{id}.yml");
         return File.Exists(path) ? await File.ReadAllTextAsync(path, cancellationToken) : null;
     }
 

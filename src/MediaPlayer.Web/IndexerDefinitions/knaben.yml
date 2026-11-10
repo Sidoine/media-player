@@ -1,0 +1,34 @@
+id: knaben
+name: Knaben
+description: Knaben Database API v2
+language: en-US
+type: public
+links:
+  - https://knaben.org/
+caps:
+  search:
+    available: true
+    supportedParams:
+      - q
+search:
+  paths:
+    - path: https://api.knaben.org/v2/search?q={{ .Keywords }}&s=150
+      response:
+        type: json
+  fields:
+    title:
+      selector: title
+    magnet:
+      selector: magnetUrl
+    infohash:
+      selector: hash
+    size:
+      selector: bytes
+    seeders:
+      selector: seeders
+    leechers:
+      selector: peers
+    category:
+      selector: category
+    grabs:
+      selector: grabs
