@@ -70,6 +70,26 @@ public sealed class WatchProgressStore(MediaDownloadService downloads, IWebHostE
         finally { gate.Release(); }
     }
 
+    public async Task SaveLibraryAsync(string libraryPath, string title, double currentTimeSeconds, double durationSeconds,
+        CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(libraryPath) || libraryPath.Length > 4096 || !double.IsFinite(currentTimeSeconds)
+            || !double.IsFinite(durationSeconds) || durationSeconds <= 0) return;
+        var key = LibraryKey(libraryPath);
+        await gate.WaitAsync(ct);
+        try
+        {
+            await EnsureLoadedAsync(ct);
+            var current = Math.Clamp(currentTimeSeconds, 0, durationSeconds);
+            var completed = current >= durationSeconds * .95 || durationSeconds - current <= 30;
+            if (completed) entries.TryRemove(key, out _);
+            else entries[key] = new WatchProgressEntry(0, "library", title, current, durationSeconds,
+                Math.Round(current / durationSeconds * 100, 2), DateTimeOffset.UtcNow, LibraryPath: libraryPath);
+            await SaveFileAsync(ct);
+        }
+        finally { gate.Release(); }
+    }
+
     public async Task SetPosterAsync(int tmdbId, string mediaType, string? posterUrl, int? seasonNumber = null, int? episodeNumber = null, CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(posterUrl)) return;
@@ -95,13 +115,13 @@ public sealed class WatchProgressStore(MediaDownloadService downloads, IWebHostE
         {
             await using var stream = File.OpenRead(sourcePath);
             var saved = await JsonSerializer.DeserializeAsync<List<WatchProgressEntry>>(stream, cancellationToken: ct) ?? [];
-            foreach (var item in saved.Where(item => item.TmdbId > 0 && double.IsFinite(item.CurrentTimeSeconds)
+            foreach (var item in saved.Where(item => (item.TmdbId > 0 || !string.IsNullOrWhiteSpace(item.LibraryPath)) && double.IsFinite(item.CurrentTimeSeconds)
                 && double.IsFinite(item.DurationSeconds) && item.DurationSeconds > 0))
             {
                 var current = Math.Clamp(item.CurrentTimeSeconds, 0, item.DurationSeconds);
                 var percent = Math.Round(current / item.DurationSeconds * 100, 2);
                 if (item.IsCompleted || percent is > 0 and < 95 && item.DurationSeconds - current > 30)
-                    entries[Key(item.TmdbId, item.MediaType, item.SeasonNumber, item.EpisodeNumber)] = item with
+                    entries[EntryKey(item)] = item with
                     { CurrentTimeSeconds = item.IsCompleted ? item.DurationSeconds : current, ProgressPercent = item.IsCompleted ? 100 : percent };
             }
         }
@@ -119,6 +139,9 @@ public sealed class WatchProgressStore(MediaDownloadService downloads, IWebHostE
     }
 
     private static string NormalizeMediaType(string? mediaType) => string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) ? "tv" : "movie";
+    private static string EntryKey(WatchProgressEntry item) => !string.IsNullOrWhiteSpace(item.LibraryPath)
+        ? LibraryKey(item.LibraryPath) : Key(item.TmdbId, item.MediaType, item.SeasonNumber, item.EpisodeNumber);
+    private static string LibraryKey(string path) => "library-" + path;
     private static string Key(int tmdbId, string? mediaType, int? seasonNumber = null, int? episodeNumber = null) =>
         string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) && seasonNumber is >= 0 && episodeNumber is > 0
             ? $"tv-{tmdbId}-s{seasonNumber:00}e{episodeNumber:00}" : $"{NormalizeMediaType(mediaType)}-{tmdbId}";
@@ -126,4 +149,4 @@ public sealed class WatchProgressStore(MediaDownloadService downloads, IWebHostE
 
 public sealed record WatchProgressEntry(int TmdbId, string MediaType, string Title, double CurrentTimeSeconds,
     double DurationSeconds, double ProgressPercent, DateTimeOffset UpdatedAt, string? PosterUrl = null,
-    int? SeasonNumber = null, int? EpisodeNumber = null, bool IsCompleted = false);
+    int? SeasonNumber = null, int? EpisodeNumber = null, bool IsCompleted = false, string? LibraryPath = null);

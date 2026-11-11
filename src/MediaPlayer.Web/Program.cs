@@ -408,6 +408,15 @@ app.MapGet("/api/downloads/{tmdbId:int}/stream", async (int tmdbId, string? medi
 });
 app.MapGet("/api/downloads", (MediaDownloadService downloads) => Results.Json(downloads.GetActiveDownloads()));
 app.MapGet("/api/watch-progress", async (WatchProgressStore progress, CancellationToken ct) => Results.Json(await progress.GetAllAsync(ct)));
+app.MapPost("/api/watch-progress", async (PlaybackProgressRequest input, WatchProgressStore progress, CancellationToken ct) =>
+{
+    if (!string.IsNullOrWhiteSpace(input.LibraryPath))
+        await progress.SaveLibraryAsync(input.LibraryPath, input.Title, input.CurrentTimeSeconds, input.DurationSeconds, ct);
+    else
+        await progress.SaveAsync(input.TmdbId, input.MediaType ?? "movie", input.Title, input.CurrentTimeSeconds,
+            input.DurationSeconds, input.PosterUrl, input.SeasonNumber, input.EpisodeNumber, ct);
+    return Results.NoContent();
+});
 app.MapGet("/api/watchlist", async (MediaWatchlistStore store, CancellationToken ct) => Results.Json(await store.GetAllAsync(ct)));
 app.MapPost("/api/watchlist", async (MediaWatchlistRequest input, MediaWatchlistStore store, MediaAvailabilityWorker worker, IHttpClientFactory httpClients, CancellationToken ct) =>
 {
@@ -625,6 +634,8 @@ record ApiCredentialsInput(string? TmdbReadAccessToken, string? OpenSubtitlesApi
 record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit, int? PreferredResolution, bool? EnableUpnp = null);
 public record TorrentCatalogSource(Guid Id, string Name, string Url, string ApiKey, bool RightsConfirmed, DateTimeOffset AddedAt);
 record LibraryItem(string Name, string Path);
+record PlaybackProgressRequest(int TmdbId, string? MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds,
+    string? PosterUrl = null, int? SeasonNumber = null, int? EpisodeNumber = null, string? LibraryPath = null);
 
 public sealed class TorrentCatalogStore(IWebHostEnvironment environment)
 {
