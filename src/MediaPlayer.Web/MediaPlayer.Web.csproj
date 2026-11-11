@@ -12,7 +12,7 @@
   <ItemGroup>
     <PackageReference Include="AngleSharp" Version="1.10.1" />
     <PackageReference Include="MediaInfo.Wrapper.Core" Version="26.10.0" />
-    <PackageReference Include="MonoTorrent" Version="3.0.2" />
+    <PackageReference Include="MonoTorrent" Version="3.9.0-alpha.unstable.rev0000" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
   </ItemGroup>
 
