@@ -1,4 +1,7 @@
 using System.Net.Http.Json;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using CommunityToolkit.Maui.Views;
 
 namespace MediaPlayer.AndroidTv;
@@ -31,6 +34,7 @@ public partial class MainPage : ContentPage
     private CancellationTokenSource pageLifetime = new();
     private bool serverReachable;
     private bool catalogConfigured = true;
+    private bool isDiscoveringServers;
 
     public MainPage()
     {
@@ -386,7 +390,7 @@ public partial class MainPage : ContentPage
             MainThread.BeginInvokeOnMainThread(() => button.Focus());
     }
 
-    private async Task LoadCatalogAsync()
+    private async Task LoadCatalogAsync(bool discoverOnFailure = true)
     {
         try
         {
@@ -405,12 +409,134 @@ public partial class MainPage : ContentPage
             catalog = [];
             if (!showingSettings)
             {
-                BuildHome("Impossible de joindre le serveur. Ouvrez les réglages pour vérifier son adresse.");
+                BuildHome(discoverOnFailure ? "Serveur introuvable. Recherche automatique sur le réseau…" : "Impossible de joindre le serveur. Vérifiez l’adresse dans les réglages.");
                 var settings = CreateButton("Configurer l’adresse du serveur", primary: true);
                 settings.Clicked += OnSettingsClicked;
                 PageContent.Add(settings);
+                if (discoverOnFailure) _ = DiscoverOnStartupAsync();
             }
         }
+    }
+
+    private async Task DiscoverOnStartupAsync()
+    {
+        var found = await DiscoverServersAsync();
+        if (pageLifetime.IsCancellationRequested || showingSettings || showingPlayer || showingDetails) return;
+        if (found.Count == 1)
+        {
+            serverUrl = found[0].Url;
+            Preferences.Default.Set(SavedServerKey, serverUrl);
+            await LoadCatalogAsync(discoverOnFailure: false);
+        }
+        else if (found.Count > 1)
+        {
+            MainThread.BeginInvokeOnMainThread(() => ShowSettings(found));
+        }
+        else
+        {
+            MainThread.BeginInvokeOnMainThread(() => BuildHome("Aucun serveur MediaPlayer trouvé. Vérifiez que le serveur et le téléviseur sont sur le même réseau."));
+        }
+    }
+
+    private async Task<List<DiscoveredServer>> DiscoverServersAsync()
+    {
+        if (isDiscoveringServers) return [];
+        isDiscoveringServers = true;
+        try
+        {
+            var ports = GetDiscoveryPorts();
+            var cancellationToken = pageLifetime.Token;
+            var preferHttps = Uri.TryCreate(serverUrl, UriKind.Absolute, out var current) && current.Scheme == Uri.UriSchemeHttps;
+            return await Task.Run(async () =>
+            {
+                var candidates = GetLocalSubnetAddresses();
+                var found = new System.Collections.Concurrent.ConcurrentBag<DiscoveredServer>();
+                using var concurrency = new SemaphoreSlim(48);
+                var probes = candidates.SelectMany(address => ports.Select(port => ProbeServerAsync(address, port, preferHttps, concurrency, found, cancellationToken)));
+                await Task.WhenAll(probes);
+                return found.DistinctBy(server => server.Url, StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(server => server.Address, StringComparer.Ordinal).ThenBy(server => server.Port).ToList();
+            }, cancellationToken);
+        }
+        catch (Exception ex) when (ex is NetworkInformationException or PlatformNotSupportedException or OperationCanceledException) { return []; }
+        finally { isDiscoveringServers = false; }
+    }
+
+    private int[] GetDiscoveryPorts()
+    {
+        var ports = new HashSet<int> { 6050 };
+        if (Uri.TryCreate(serverUrl, UriKind.Absolute, out var current) && current.Port is > 0 and <= 65535)
+            ports.Add(current.Port);
+        return ports.ToArray();
+    }
+
+    private static List<IPAddress> GetLocalSubnetAddresses()
+    {
+        var addresses = new HashSet<IPAddress>();
+        foreach (var network in NetworkInterface.GetAllNetworkInterfaces().Where(item =>
+                     item.OperationalStatus == OperationalStatus.Up && item.NetworkInterfaceType != NetworkInterfaceType.Loopback))
+        {
+            IPInterfaceProperties properties;
+            try { properties = network.GetIPProperties(); }
+            catch (NetworkInformationException) { continue; }
+
+            foreach (var unicast in properties.UnicastAddresses.Where(item => item.Address.AddressFamily == AddressFamily.InterNetwork))
+            {
+                var bytes = unicast.Address.GetAddressBytes();
+                if (!IsPrivateIpv4(bytes)) continue;
+                var prefix = Math.Clamp(unicast.PrefixLength, (byte)16, (byte)32);
+                // Cap large home subnets to the /24 containing this device instead of generating tens of thousands of hosts.
+                var scanPrefix = Math.Max(prefix, (byte)24);
+                var ip = System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(bytes);
+                var mask = scanPrefix == 0 ? 0u : uint.MaxValue << (32 - scanPrefix);
+                var networkAddress = ip & mask;
+                var broadcastAddress = networkAddress | ~mask;
+                for (var candidate = networkAddress + 1; candidate < broadcastAddress; candidate++)
+                {
+                    var candidateBytes = new byte[4];
+                    System.Buffers.Binary.BinaryPrimitives.WriteUInt32BigEndian(candidateBytes, candidate);
+                    addresses.Add(new IPAddress(candidateBytes));
+                }
+            }
+        }
+        return addresses.ToList();
+    }
+
+    private static bool IsPrivateIpv4(byte[] address) => address.Length == 4 &&
+        (address[0] == 10 || address[0] == 192 && address[1] == 168 || address[0] == 172 && address[1] is >= 16 and <= 31);
+
+    private async Task ProbeServerAsync(IPAddress address, int port, bool preferHttps, SemaphoreSlim concurrency,
+        System.Collections.Concurrent.ConcurrentBag<DiscoveredServer> found, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await concurrency.WaitAsync(cancellationToken);
+            try
+            {
+                using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                probeTimeout.CancelAfter(TimeSpan.FromMilliseconds(450));
+                using var socket = new TcpClient(AddressFamily.InterNetwork);
+                await socket.ConnectAsync(address, port, probeTimeout.Token);
+
+                var schemes = preferHttps ? new[] { Uri.UriSchemeHttps, Uri.UriSchemeHttp } : new[] { Uri.UriSchemeHttp, Uri.UriSchemeHttps };
+                foreach (var scheme in schemes)
+                {
+                    var url = $"{scheme}://{address}:{port}";
+                    try
+                    {
+                        using var client = new HttpClient { BaseAddress = new Uri(url + "/"), Timeout = TimeSpan.FromMilliseconds(900) };
+                        using var response = await client.GetAsync("api/catalog/local-status", cancellationToken);
+                        if (!response.IsSuccessStatusCode) continue;
+                        var state = await response.Content.ReadFromJsonAsync<LocalMediaStateResponse>(cancellationToken: cancellationToken);
+                        if (state is not null) found.Add(new DiscoveredServer(address.ToString(), port, url, $"MediaPlayer · {address}:{port}"));
+                        break;
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or UriFormatException or System.Text.Json.JsonException) { }
+                }
+            }
+            finally { concurrency.Release(); }
+        }
+        catch (Exception ex) when (ex is SocketException or OperationCanceledException or HttpRequestException or UriFormatException) { }
     }
 
     private async Task LoadHomeCarouselsAsync(bool loadGenres)
@@ -585,7 +711,7 @@ public partial class MainPage : ContentPage
 
     private void OnSettingsClicked(object? sender, EventArgs e) => ShowSettings();
 
-    private void ShowSettings()
+    private void ShowSettings(List<DiscoveredServer>? initialResults = null)
     {
         showingSettings = true;
         showingDetails = false;
@@ -597,41 +723,87 @@ public partial class MainPage : ContentPage
         panel.Add(new Label { Text = "Indiquez l’adresse de votre serveur MediaPlayer sur le réseau local.", TextColor = Muted, FontSize = 18 });
         var address = new Entry { Text = serverUrl, Placeholder = "http://brique2:6050", TextColor = Colors.White, PlaceholderColor = Muted, BackgroundColor = Panel, FontSize = 20, ReturnType = ReturnType.Go };
         var status = new Label { TextColor = Color.FromArgb("#FF8C92"), FontSize = 15, IsVisible = false };
-        var connect = CreateButton("Se connecter", primary: true);
-        connect.Clicked += async (_, _) =>
+        var results = new VerticalStackLayout { Spacing = 8 };
+        var discover = CreateButton("Détecter les serveurs sur le réseau", primary: false);
+        discover.Clicked += async (_, _) =>
         {
-            if (!TryNormalizeServerAddress(address.Text, out var normalized, out var error))
-            {
-                status.Text = error;
-                status.IsVisible = true;
-                address.Focus();
-                return;
-            }
-            serverUrl = normalized;
-            Preferences.Default.Set(SavedServerKey, serverUrl);
+            discover.IsEnabled = false;
             status.TextColor = Muted;
-            status.Text = "Connexion au serveur…";
+            status.Text = "Recherche sur le réseau local…";
             status.IsVisible = true;
-            catalog = [];
-            await LoadCatalogAsync();
-            if (serverReachable)
-            {
-                showingSettings = false;
-                activeSection = "Accueil";
-                BuildNavigation();
-                BuildHome(catalogConfigured ? null : "Le catalogue TMDB n’est pas configuré sur le serveur.");
-            }
-            else
+            results.Children.Clear();
+            var found = await DiscoverServersAsync();
+            discover.IsEnabled = true;
+            if (found.Count == 0)
             {
                 status.TextColor = Color.FromArgb("#FF8C92");
-                status.Text = "Serveur inaccessible ou catalogue vide. Vérifiez l’adresse et le réseau.";
+                status.Text = "Aucun serveur MediaPlayer trouvé sur ce réseau.";
+                return;
             }
+            status.TextColor = Muted;
+            status.Text = found.Count == 1 ? "Un serveur trouvé :" : $"{found.Count} serveurs trouvés :";
+            AddDiscoveredServerButtons(found, results, address, status);
         };
+        var connect = CreateButton("Se connecter", primary: true);
+        connect.Clicked += async (_, _) => await ConnectToServerAsync(address.Text, address, status);
         panel.Add(address);
+        panel.Add(discover);
         panel.Add(status);
+        panel.Add(results);
         panel.Add(connect);
         PageContent.Add(panel);
+        if (initialResults is { Count: > 0 })
+        {
+            status.TextColor = Muted;
+            status.Text = initialResults.Count == 1 ? "Un serveur trouvé :" : $"{initialResults.Count} serveurs trouvés :";
+            status.IsVisible = true;
+            AddDiscoveredServerButtons(initialResults, results, address, status);
+        }
         MainThread.BeginInvokeOnMainThread(() => address.Focus());
+    }
+
+    private void AddDiscoveredServerButtons(List<DiscoveredServer> servers, VerticalStackLayout results, Entry address, Label status)
+    {
+        foreach (var server in servers)
+        {
+            var select = CreateButton(server.DisplayName, primary: false);
+            select.HorizontalOptions = LayoutOptions.Fill;
+            select.Clicked += async (_, _) => await ConnectToServerAsync(server.Url, address, status);
+            results.Add(select);
+        }
+    }
+
+    private async Task ConnectToServerAsync(string? input, Entry address, Label status)
+    {
+        if (!TryNormalizeServerAddress(input, out var normalized, out var error))
+        {
+            status.Text = error;
+            status.TextColor = Color.FromArgb("#FF8C92");
+            status.IsVisible = true;
+            address.Focus();
+            return;
+        }
+
+        address.Text = normalized;
+        serverUrl = normalized;
+        Preferences.Default.Set(SavedServerKey, serverUrl);
+        status.TextColor = Muted;
+        status.Text = "Connexion au serveur…";
+        status.IsVisible = true;
+        catalog = [];
+        await LoadCatalogAsync(discoverOnFailure: false);
+        if (!serverReachable)
+        {
+            status.TextColor = Color.FromArgb("#FF8C92");
+            status.Text = "Serveur inaccessible. Vérifiez l’adresse et le réseau.";
+            return;
+        }
+
+        showingSettings = false;
+        activeSection = "Accueil";
+        BuildNavigation();
+        BuildHome(catalogConfigured ? null : "Le catalogue TMDB n’est pas configuré sur le serveur.");
+        _ = LoadHomeCarouselsAsync(catalogConfigured);
     }
 
     private sealed record CatalogResponse(bool Configured, List<MediaItem> Results);
@@ -639,6 +811,7 @@ public partial class MainPage : ContentPage
     private sealed record MediaDetails(string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, int? Year, List<string>? Genres, int? RuntimeMinutes, int? SeasonCount);
     private sealed record LibraryResponse(List<LibraryItem> Items);
     private sealed record LibraryItem(string Name, string Path);
+    private sealed record DiscoveredServer(string Address, int Port, string Url, string DisplayName);
     private sealed record WatchProgressEntry(int TmdbId, string MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds, double ProgressPercent, DateTimeOffset UpdatedAt, string? PosterUrl = null, int? SeasonNumber = null, int? EpisodeNumber = null, bool IsCompleted = false, string? LibraryPath = null);
     private sealed record PlaybackProgressRequest(int TmdbId, string MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds, string? PosterUrl = null, int? SeasonNumber = null, int? EpisodeNumber = null, string? LibraryPath = null);
     private sealed record LocalMediaStateResponse(List<LocalMediaEntry>? Downloads, List<LocalMediaEntry>? Watchlist);

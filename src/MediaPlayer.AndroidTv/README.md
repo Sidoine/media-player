@@ -12,6 +12,8 @@ dotnet run --project src/MediaPlayer.Web --no-launch-profile --urls http://0.0.0
 
 Autoriser MediaPlayer dans le pare-feu Windows pour le réseau privé si nécessaire. Le PC et le boîtier Google TV doivent être sur le même réseau. Au premier lancement, l’adresse `http://brique2:6050` est préremplie ; elle suppose que `brique2` résout vers le PC sur le réseau local et que le serveur écoute sur le port 6050. Remplacer cette adresse si le nom ou le port diffère. L’adresse choisie est conservée sur le boîtier.
 
+Si l’adresse enregistrée ne répond pas, l’application recherche automatiquement les serveurs MediaPlayer présents sur le sous-réseau IPv4 local. La page de configuration propose aussi une recherche manuelle et permet de choisir parmi plusieurs serveurs trouvés. Le port 6050 et le port de l’adresse configurée sont vérifiés.
+
 ## Construire l’APK
 
 Avec la charge de travail .NET Android, le SDK Android et JDK 21 installés :

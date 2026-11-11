@@ -10,7 +10,7 @@ MediaPlayer est une application personnelle sous licence GPL-3.0-only. Le dépô
 - `src/MediaPlayer.Web/Components` : pages, layouts et composants Razor.
 - `src/MediaPlayer.Web/Services` : logique métier et stockage local, notamment identifiants, indexeurs, bibliothèque et téléchargements.
 - `src/MediaPlayer.Web/IndexerDefinitions` : définitions Cardigann intégrées au dépôt. Les définitions synchronisées et les données utilisateur sont conservées dans `App_Data` et ignorées par Git.
-- `src/MediaPlayer.AndroidTv` : client .NET MAUI natif avec catalogue, fiches et bibliothèque, configuration persistante de l’URL du serveur, navigation à la télécommande et lecture intégrée via MediaElement. Cibles Android TV et Windows (Windows s’ajoute sur un hôte Windows sans RID explicite). Le paquet Android est `fr.mediaplayer.androidtv`.
+- `src/MediaPlayer.AndroidTv` : client .NET MAUI natif avec catalogue, fiches et bibliothèque, découverte automatique des serveurs sur le sous-réseau IPv4 quand l’adresse enregistrée échoue, configuration persistante de l’URL du serveur, navigation à la télécommande et lecture intégrée via MediaElement. Cibles Android TV et Windows (Windows s’ajoute sur un hôte Windows sans RID explicite). Le paquet Android est `fr.mediaplayer.androidtv`.
 - `tests/MediaPlayer.Tests` : tests .NET/xUnit.
 - `tests/MediaPlayer.Playwright` : tests de navigateur Playwright en JavaScript.
 - `MediaPlayer.slnx` : solution .NET (Web, Android TV et tests .NET).
