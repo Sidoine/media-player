@@ -12,6 +12,19 @@ public sealed class MediaPropertiesService
         var info = new FileInfo(path);
         var fileName = info.Name;
         var size = info.Exists ? info.Length : 0;
+
+        // Matroska/WebM metadata lives in the EBML header and can be read without
+        // loading MediaInfo's native library (which is unavailable in some deployments).
+        if (Path.GetExtension(path).Equals(".mkv", StringComparison.OrdinalIgnoreCase)
+            || Path.GetExtension(path).Equals(".webm", StringComparison.OrdinalIgnoreCase))
+        {
+            var metadata = MatroskaMetadataReader.Read(path, ct);
+            var subtitleTracks = metadata.SubtitleTracks.ToList();
+            AddExternalSubtitles(path, subtitleTracks);
+            return new MediaProperties(fileName, size, metadata.Duration, metadata.Resolution,
+                metadata.AudioTracks, subtitleTracks.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        }
+
         await analysisGate.WaitAsync(ct);
         try
         {
@@ -27,17 +40,21 @@ public sealed class MediaPropertiesService
             var subtitleTracks = result.Subtitles.Select(track => JoinDetails(track.Language, track.Codec.ToString()))
                 .Where(track => !string.IsNullOrWhiteSpace(track)).Select(track => track!).ToList();
 
-            var parent = Path.GetDirectoryName(path);
-            if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent))
-            {
-                subtitleTracks.AddRange(Directory.EnumerateFiles(parent, "*", SearchOption.AllDirectories)
-                    .Where(IsExternalSubtitle)
-                    .Select(file => $"{ExternalSubtitleLanguage(file)} — fichier séparé ({Path.GetExtension(file).TrimStart('.').ToUpperInvariant()})"));
-            }
+            AddExternalSubtitles(path, subtitleTracks);
 
             return new MediaProperties(fileName, size, duration, resolution, audioTracks, subtitleTracks.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
         }
         finally { analysisGate.Release(); }
+    }
+
+    private static void AddExternalSubtitles(string path, ICollection<string> subtitleTracks)
+    {
+        var parent = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(parent) && Directory.Exists(parent))
+        {
+            foreach (var file in Directory.EnumerateFiles(parent, "*", SearchOption.AllDirectories).Where(IsExternalSubtitle))
+                subtitleTracks.Add($"{ExternalSubtitleLanguage(file)} — fichier séparé ({Path.GetExtension(file).TrimStart('.').ToUpperInvariant()})");
+        }
     }
 
     private static string? JoinDetails(params string?[] values)
