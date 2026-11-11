@@ -212,7 +212,7 @@ public partial class MainPage : ContentPage
         hitTarget.Unfocused += (_, _) => { posterBorder.Stroke = Color.FromArgb("#35363D"); posterBorder.StrokeThickness = 1; posterBorder.Scale = 1; };
         card.Add(posterBorder);
         card.Add(new Label { Text = item.Title, TextColor = Colors.White, FontSize = 15, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 });
-        card.Add(new Label { Text = item.LibraryPath is not null ? "Reprendre" : item.MediaType == "tv" ? "Série" : "Film", TextColor = Muted, FontSize = 13 });
+        card.Add(new Label { Text = item.LibraryPath is not null ? item.CurrentTimeSeconds > 0 ? "Reprendre" : "Dans la bibliothèque" : item.MediaType == "tv" ? "Série" : "Film", TextColor = Muted, FontSize = 13 });
         if (item.DurationSeconds > 0)
             card.Add(new ProgressBar { Progress = Math.Clamp(item.CurrentTimeSeconds / item.DurationSeconds, 0, 1), ProgressColor = Red, BackgroundColor = Panel, HeightRequest = 5 });
         return card;
@@ -257,31 +257,32 @@ public partial class MainPage : ContentPage
 
     private async Task ShowLibraryAsync()
     {
-        await LoadContinueWatchingAsync(CreateClient());
         PageContent.Clear();
         var body = new VerticalStackLayout { Padding = new Thickness(76, 40), Spacing = 20 };
         body.Add(Eyebrow("VOTRE COLLECTION"));
         body.Add(new Label { Text = "Ma bibliothèque", TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
-        body.Add(new Label { Text = "Vos médias enregistrés sur le serveur.", TextColor = Muted, FontSize = 17 });
+        body.Add(new Label { Text = "Vos médias et les films que vous souhaitez voir.", TextColor = Muted, FontSize = 17 });
         PageContent.Add(body);
         try
         {
             using var client = CreateClient();
+            await Task.WhenAll(LoadContinueWatchingAsync(client), LoadLocalMediaAsync(client));
             var library = await client.GetFromJsonAsync<LibraryResponse>("api/library", pageLifetime.Token);
-            if (library?.Items.Count is not > 0)
+            var files = (library?.Items ?? []).Select(file =>
             {
-                body.Add(new Label { Text = "Aucun média trouvé dans la bibliothèque.", TextColor = Muted, FontSize = 19, Margin = new Thickness(0, 14) });
+                var progress = continueWatching.FirstOrDefault(item => string.Equals(item.LibraryPath, file.Path, StringComparison.Ordinal));
+                return new MediaItem(0, file.Name, null, progress?.Poster, null, null, 0, null, null,
+                    LibraryPath: file.Path, CurrentTimeSeconds: progress?.CurrentTimeSeconds ?? 0, DurationSeconds: progress?.DurationSeconds ?? 0);
+            }).ToList();
+
+            if (files.Count == 0 && watchlistMedia.Count == 0)
+            {
+                body.Add(new Label { Text = "Aucun média ni film surveillé pour le moment.", TextColor = Muted, FontSize = 19, Margin = new Thickness(0, 14) });
                 return;
             }
 
-            foreach (var file in library.Items)
-            {
-                var play = CreateButton($"▶   {file.Name}", primary: false);
-                play.HorizontalOptions = LayoutOptions.Fill;
-                play.Clicked += async (_, _) => await OpenLibraryItemAsync(file);
-                body.Add(play);
-                if (body.Children.Count == 4) MainThread.BeginInvokeOnMainThread(() => play.Focus());
-            }
+            if (files.Count > 0) AddOptionalCarousel(body, "Vos médias", files, "DANS VOTRE BIBLIOTHÈQUE");
+            AddOptionalCarousel(body, "Films à surveiller", watchlistMedia, "VOTRE LISTE");
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
         {
