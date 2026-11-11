@@ -3,6 +3,14 @@ using System.Text.Json;
 using media_player.Components;
 using media_player.Services;
 
+if (args.Length == 2 && string.Equals(args[0], "--signal-dotnet-watch", StringComparison.Ordinal))
+{
+    await Task.Delay(TimeSpan.FromSeconds(2));
+    var marker = $"internal static class ServerRestartMarker_{Guid.NewGuid():N} {{ }}{Environment.NewLine}";
+    await File.WriteAllTextAsync(args[1], marker);
+    return;
+}
+
 var builder = WebApplication.CreateBuilder(args);
 var playwrightMode = builder.Environment.IsEnvironment("Playwright") || builder.Configuration.GetValue("Playwright:Enabled", false);
 builder.Services.AddSingleton<TorrentCatalogStore>();
@@ -17,6 +25,7 @@ builder.Services.AddSingleton<MediaAvailabilityWorker>();
 builder.Services.AddSingleton<IndexerPopularityService>();
 builder.Services.AddSingleton<MediaPropertiesService>();
 builder.Services.AddSingleton<ApiCredentialStore>();
+builder.Services.AddSingleton<ServerRestartService>();
 if (!playwrightMode)
 {
     builder.Services.AddHostedService(sp => sp.GetRequiredService<MediaAvailabilityWorker>());
@@ -73,7 +82,12 @@ app.MapGet("/api/configuration/media", (MediaStorageSettingsStore settings, Medi
         cacheMaxBytes = value.CacheMaxBytes,
         usedBytes = downloads.GetStorageUsedBytes(),
         shareRatioLimit = value.ShareRatioLimit,
+        preferredResolution = value.PreferredResolution,
+        enableUpnp = value.EnableUpnp,
+        activeEnableUpnp = downloads.EnableUpnp,
+        portForwarding = downloads.GetPortForwardingDiagnostic(),
         requiresRestart = !string.Equals(Path.GetFullPath(value.CacheRoot), Path.GetFullPath(downloads.CacheRoot), StringComparison.OrdinalIgnoreCase)
+            || value.EnableUpnp != downloads.EnableUpnp
     });
 });
 app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, MediaStorageSettingsStore settings, MediaDownloadService downloads, IWebHostEnvironment environment, CancellationToken ct) =>
@@ -83,6 +97,10 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
         return Results.BadRequest(new { error = "Le quota doit être compris entre 100 Mo et 10 To." });
     if (input.ShareRatioLimit is double ratio && (!double.IsFinite(ratio) || ratio < 0 || ratio > 1000))
         return Results.BadRequest(new { error = "Le ratio doit être compris entre 0 et 1000, ou choisir le partage sans limite." });
+    var preferredResolution = input.PreferredResolution ?? settings.Current.PreferredResolution;
+    if (!MediaStorageSettingsStore.IsSupportedResolution(preferredResolution))
+        return Results.BadRequest(new { error = "La résolution préférée doit être 720p, 1080p ou 2160p." });
+    var enableUpnp = input.EnableUpnp ?? settings.Current.EnableUpnp;
 
     string cacheRoot;
     try
@@ -99,7 +117,7 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
         return Results.BadRequest(new { error = "Le dossier choisi ne peut pas être utilisé par le serveur." });
     }
 
-    var saved = await settings.SaveAsync(new MediaStorageSettings(cacheRoot, input.CacheMaxBytes, input.ShareRatioLimit), ct);
+    var saved = await settings.SaveAsync(new MediaStorageSettings(cacheRoot, input.CacheMaxBytes, input.ShareRatioLimit, preferredResolution, enableUpnp), ct);
     await downloads.ApplySharingPolicyAsync(ct);
     return Results.Json(new
     {
@@ -108,8 +126,18 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
         cacheMaxBytes = saved.CacheMaxBytes,
         usedBytes = downloads.GetStorageUsedBytes(),
         shareRatioLimit = saved.ShareRatioLimit,
+        preferredResolution = saved.PreferredResolution,
+        enableUpnp = saved.EnableUpnp,
+        activeEnableUpnp = downloads.EnableUpnp,
+        portForwarding = downloads.GetPortForwardingDiagnostic(),
         requiresRestart = !string.Equals(Path.GetFullPath(saved.CacheRoot), Path.GetFullPath(downloads.CacheRoot), StringComparison.OrdinalIgnoreCase)
+            || saved.EnableUpnp != downloads.EnableUpnp
     });
+});
+app.MapPost("/api/server/restart", (HttpContext context, ServerRestartService restart) =>
+{
+    restart.ScheduleRestart(context);
+    return Results.Accepted();
 });
 
 app.MapGet("/api/indexer-definitions/status", (IndexerDefinitionCacheService cache, CancellationToken ct) => cache.GetStatusAsync(ct));
@@ -135,7 +163,8 @@ app.MapPost("/api/selected-indexers", async (SelectedIndexerInput input, Indexer
 {
     if (!input.RightsConfirmed) return Results.BadRequest(new { error = "Confirmez que vous pouvez utiliser le média obtenu via cette source." });
     var definition = (await cache.GetDefinitionsAsync(cancellationToken: ct)).FirstOrDefault(x => string.Equals(x.Id, input.DefinitionId, StringComparison.OrdinalIgnoreCase));
-    if (definition is null) return Results.NotFound(new { error = "Cette définition n’est pas présente dans le cache local." });
+    definition ??= (await cache.GetBundledDefinitionsAsync(cancellationToken: ct)).FirstOrDefault(x => string.Equals(x.Id, input.DefinitionId, StringComparison.OrdinalIgnoreCase));
+    if (definition is null) return Results.NotFound(new { error = "Cette définition n’est pas disponible localement." });
     var source = await store.AddAsync(new SelectedIndexer(Guid.NewGuid(), definition.Id, definition.Name, true, DateTimeOffset.UtcNow), ct);
     return Results.Created($"/api/selected-indexers/{source.Id}", source);
 });
@@ -343,6 +372,11 @@ app.MapGet("/api/catalog/indexer-popular", async (IndexerPopularityService popul
 app.MapGet("/api/catalog/local-status", async (MediaDownloadService downloads, MediaWatchlistStore watchlist, CancellationToken ct) =>
     Results.Json(new { downloads = downloads.GetMediaStatuses(), watchlist = await watchlist.GetAllAsync(ct) }));
 
+app.MapGet("/api/downloads/{tmdbId:int}/dht-diagnostic", (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, MediaDownloadService downloads) =>
+{
+    var diagnostic = downloads.GetDhtDiagnostic(tmdbId, mediaType ?? "movie", seasonNumber, episodeNumber);
+    return diagnostic is null ? Results.NotFound() : Results.Json(diagnostic);
+});
 app.MapGet("/api/downloads/{tmdbId:int}", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, MediaDownloadService downloads, CancellationToken ct) =>
 {
     var status = await downloads.GetStatusAsync(tmdbId, mediaType ?? "movie", seasonNumber, episodeNumber, ct);
@@ -493,22 +527,17 @@ app.MapGet("/api/library", (IConfiguration config, MediaDownloadService download
             .Select(f => new LibraryItem(Path.GetFileNameWithoutExtension(f), Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(Path.GetRelativePath(root, f))).TrimEnd('=').Replace('+', '-').Replace('/', '_'))));
     files.AddRange(downloads.GetCompletedMediaFiles().Select(file => new LibraryItem(
         string.Equals(file.MediaType, "tv", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(file.FullPath) : file.Name,
-        "cache." + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(Path.GetRelativePath(downloads.CacheRoot, file.FullPath))).TrimEnd('=').Replace('+', '-').Replace('/', '_'))));
+        "cache." + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(file.FullPath))).TrimEnd('=').Replace('+', '-').Replace('/', '_'))));
     return Results.Json(new { items = files });
 });
 app.MapGet("/api/library/play/{path}", async (string path, IConfiguration config, MediaDownloadService downloads, CancellationToken ct) =>
 {
     var fromCache = path.StartsWith("cache.", StringComparison.Ordinal);
     var root = fromCache ? downloads.CacheRoot : config["Media:Root"] ?? Environment.GetEnvironmentVariable("MEDIA_ROOT");
-    if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return Results.NotFound();
     try
     {
-        var encoded = (fromCache ? path[6..] : path).Replace('-', '+').Replace('_', '/');
-        encoded += new string('=', (4 - encoded.Length % 4) % 4);
-        var relative = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-        var full = Path.GetFullPath(Path.Combine(root, relative));
-        var basePath = Path.GetFullPath(root) + Path.DirectorySeparatorChar;
-        if (!full.StartsWith(basePath, StringComparison.OrdinalIgnoreCase) || !File.Exists(full)) return Results.NotFound();
+        if (!TryResolveLibraryPath(root, path, fromCache, out var full)) return Results.NotFound();
+        if (fromCache ? !downloads.IsCompletedMediaFilePath(full) : !IsPathWithinRoot(full, root!)) return Results.NotFound();
         var contentType = Path.GetExtension(full).ToLowerInvariant() switch
         {
             ".webm" => "video/webm",
@@ -524,15 +553,10 @@ app.MapDelete("/api/library/{path}", async (string path, IConfiguration config, 
 {
     var fromCache = path.StartsWith("cache.", StringComparison.Ordinal);
     var root = fromCache ? downloads.CacheRoot : config["Media:Root"] ?? Environment.GetEnvironmentVariable("MEDIA_ROOT");
-    if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return Results.NotFound();
     try
     {
-        var encoded = (fromCache ? path[6..] : path).Replace('-', '+').Replace('_', '/');
-        encoded += new string('=', (4 - encoded.Length % 4) % 4);
-        var relative = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-        var full = Path.GetFullPath(Path.Combine(root, relative));
-        var basePath = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (!full.StartsWith(basePath, StringComparison.OrdinalIgnoreCase)) return Results.NotFound();
+        if (!TryResolveLibraryPath(root, path, fromCache, out var full)) return Results.NotFound();
+        if (fromCache ? !downloads.IsCompletedMediaFilePath(full) : !IsPathWithinRoot(full, root!)) return Results.NotFound();
         if (fromCache)
             return await downloads.DeleteCachedMediaFileAsync(full, ct) ? Results.NoContent() : Results.NotFound();
         var allowed = new[] { ".mp4", ".mkv", ".webm", ".m4v", ".avi" };
@@ -547,16 +571,11 @@ app.MapGet("/api/library/properties/{path}", async (string path, IConfiguration 
 {
     var fromCache = path.StartsWith("cache.", StringComparison.Ordinal);
     var root = fromCache ? downloads.CacheRoot : config["Media:Root"] ?? Environment.GetEnvironmentVariable("MEDIA_ROOT");
-    if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root)) return Results.NotFound();
     try
     {
-        var encoded = (fromCache ? path[6..] : path).Replace('-', '+').Replace('_', '/');
-        encoded += new string('=', (4 - encoded.Length % 4) % 4);
-        var relative = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(encoded));
-        var full = Path.GetFullPath(Path.Combine(root, relative));
-        var basePath = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!TryResolveLibraryPath(root, path, fromCache, out var full)) return Results.NotFound();
         var allowed = new[] { ".mp4", ".mkv", ".webm", ".m4v", ".avi" };
-        if (!full.StartsWith(basePath, StringComparison.OrdinalIgnoreCase)
+        if ((fromCache ? !downloads.IsCompletedMediaFilePath(full) : !IsPathWithinRoot(full, root!))
             || !allowed.Contains(Path.GetExtension(full), StringComparer.OrdinalIgnoreCase) || !File.Exists(full)) return Results.NotFound();
         return Results.Json(await properties.ReadAsync(full, ct));
     }
@@ -572,11 +591,38 @@ static int? ReadMediaYear(JsonElement media)
     return date is { Length: >= 4 } && int.TryParse(date[..4], out var year) ? year : null;
 }
 
+static bool TryResolveLibraryPath(string? root, string encodedPath, bool fromCache, out string fullPath)
+{
+    fullPath = "";
+    if (!fromCache && (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))) return false;
+    var token = fromCache ? encodedPath[6..] : encodedPath;
+    token = token.Replace('-', '+').Replace('_', '/');
+    token += new string('=', (4 - token.Length % 4) % 4);
+    var decoded = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(token));
+    if (Path.IsPathRooted(decoded))
+    {
+        if (!fromCache) return false;
+        fullPath = Path.GetFullPath(decoded);
+    }
+    else
+    {
+        if (string.IsNullOrWhiteSpace(root)) return false;
+        fullPath = Path.GetFullPath(Path.Combine(root, decoded));
+    }
+    return true;
+}
+
+static bool IsPathWithinRoot(string fullPath, string root)
+{
+    var basePath = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    return fullPath.StartsWith(basePath, StringComparison.OrdinalIgnoreCase);
+}
+
 record TorrentCatalogInput(string Name, string Url, string ApiKey, bool RightsConfirmed);
 record TrackerInput(List<string> Urls);
 record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
 record ApiCredentialsInput(string? TmdbReadAccessToken, string? OpenSubtitlesApiKey);
-record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit);
+record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit, int? PreferredResolution, bool? EnableUpnp = null);
 public record TorrentCatalogSource(Guid Id, string Name, string Url, string ApiKey, bool RightsConfirmed, DateTimeOffset AddedAt);
 record LibraryItem(string Name, string Path);
 

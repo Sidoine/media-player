@@ -20,4 +20,8 @@
     <Content Include="IndexerDefinitions\**\*.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Watch Include="App_Data\server-restart-marker.cs" />
+  </ItemGroup>
+
 </Project>

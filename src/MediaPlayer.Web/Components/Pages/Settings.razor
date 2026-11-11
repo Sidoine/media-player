@@ -15,6 +15,7 @@
     <nav class="settings-nav" aria-label="Sections de configuration">
         <button type="button" data-section="dashboard" class="active" aria-current="location">Tableau de bord</button>
         <button type="button" data-section="media-storage">Stockage des médias</button>
+        <button type="button" data-section="playback-preferences">Résolution préférée</button>
         <button type="button" data-section="bittorrent-sharing">Partage BitTorrent</button>
         <button type="button" data-section="api-keys">Clés API</button>
         <button type="button" data-section="indexes">Indexeurs</button>
@@ -34,8 +35,66 @@
             <label>Dossier de stockage<input @bind="MediaCacheRootInput" @bind:after="SaveMediaSettingsAsync" placeholder="F:\\Media" required /></label>
             <label>Quota (Go)<input @bind="CacheQuotaGbInput" @bind:after="SaveMediaSettingsAsync" type="number" min="0.1" max="10240" step="0.1" required /></label>
         </div>
+        <div class="tracker-settings">
+            <label class="rights-check">
+                <input @bind="EnableUpnpInput" @bind:after="SaveMediaSettingsAsync" type="checkbox" />
+                Autoriser UPnP/NAT-PMP pour rediriger automatiquement les ports BitTorrent
+                <span class="settings-info-tooltip">
+                    <button type="button" aria-label="Informations sur la redirection UPnP" aria-describedby="upnp-tooltip">ⓘ</button>
+                    <span id="upnp-tooltip" role="tooltip">Le routeur doit prendre en charge UPnP ou NAT-PMP. La redirection est demandée au démarrage du moteur BitTorrent.</span>
+                </span>
+            </label>
+        </div>
+        @if (MediaSettingsStatus?.PortForwarding is { } portForwarding)
+        {
+            @if (!portForwarding.Enabled)
+            {
+                <p class="credential-status">La redirection UPnP/NAT-PMP est inactive dans le moteur.</p>
+            }
+            @if (portForwarding.Created.Count > 0)
+            {
+                <p class="credential-status">Mappages créés : @FormatPortMappings(portForwarding.Created)</p>
+            }
+            @if (portForwarding.Pending.Count > 0)
+            {
+                <p class="credential-status">Mappages en attente : @FormatPortMappings(portForwarding.Pending). Le moteur cherche une passerelle compatible.</p>
+            }
+            @if (portForwarding.Failed.Count > 0)
+            {
+                <p class="credential-status">Échec des mappages : @FormatPortMappings(portForwarding.Failed). Le routeur n’a pas confirmé leur création.</p>
+            }
+            @if (portForwarding.Enabled && portForwarding.Created.Count == 0 && portForwarding.Pending.Count == 0 && portForwarding.Failed.Count == 0)
+            {
+                <p class="credential-status">Le moteur n’a signalé aucun mappage UPnP/NAT-PMP.</p>
+            }
+        }
         @if (MediaSettingsStatus is not null) { <p class="credential-status">@($"{MediaSettingsStatus.UsedBytes / 1024d / 1024 / 1024:0.0}") Go utilisés sur @($"{(double)MediaSettingsStatus.CacheMaxBytes / 1024 / 1024 / 1024:0.0}") Go · dossier actif : @MediaSettingsStatus.ActiveCacheRoot</p> }
-        @if (MediaSettingsStatus?.RequiresRestart == true) { <div class="inline-message">Le nouveau dossier sera utilisé après redémarrage. Les médias déjà présents restent dans leur dossier actuel.</div> }
+        @if (MediaSettingsStatus?.RequiresRestart == true)
+        {
+            <div class="inline-message">
+                @if (!string.Equals(MediaSettingsStatus.CacheRoot, MediaSettingsStatus.ActiveCacheRoot, StringComparison.OrdinalIgnoreCase))
+                {
+                    <span>Le nouveau dossier sera utilisé après redémarrage. Les médias déjà présents restent dans leur dossier actuel.</span>
+                }
+                @if (MediaSettingsStatus.EnableUpnp != MediaSettingsStatus.ActiveEnableUpnp)
+                {
+                    <span>Le changement UPnP/NAT-PMP sera appliqué après redémarrage du moteur.</span>
+                }
+                <AppButton Variant="light" Class="compact" Disabled="@IsRestartingServer" OnClick="RestartServerAsync">@(IsRestartingServer ? "Redémarrage…" : "Redémarrer le serveur")</AppButton>
+                <span data-server-restart-status aria-live="polite"></span>
+            </div>
+        }
+    </PanelCard>
+    <PanelCard Id="playback-preferences" Eyebrow="QUALITÉ DES SOURCES" Title="Résolution préférée" Description="Cette résolution est automatiquement choisie lorsqu’elle distingue une source. Si plusieurs sources correspondent, la version originale est privilégiée.">
+        <div class="source-form settings-source-form">
+            <label>Résolution préférée
+                <select @bind="PreferredResolutionInput" @bind:after="SaveMediaSettingsAsync">
+                    <option value="2160">2160p (4K)</option>
+                    <option value="1080">1080p</option>
+                    <option value="720">720p</option>
+                </select>
+            </label>
+        </div>
     </PanelCard>
     <PanelCard Id="bittorrent-sharing" Eyebrow="ENVOI APRÈS TÉLÉCHARGEMENT" Title="Partage BitTorrent" Description="Le ratio correspond au volume envoyé divisé par le volume téléchargé. À 0, le partage s’arrête dès la fin du téléchargement.">
         <div class="tracker-settings">
@@ -161,8 +220,11 @@
     private bool IsAddingDefinition;
     private string MediaCacheRootInput = "";
     private decimal CacheQuotaGbInput = 500;
+    private int PreferredResolutionInput = 1080;
+    private bool EnableUpnpInput;
     private decimal ShareRatioInput = 1;
     private bool ShareWithoutLimit;
+    private bool IsRestartingServer;
     private MediaSettingsResponse? MediaSettingsStatus;
     private string? ToastMessage;
     private string ToastVariant = "success";
@@ -225,6 +287,8 @@
             if (MediaSettingsStatus is null) return;
             MediaCacheRootInput = MediaSettingsStatus.CacheRoot;
             CacheQuotaGbInput = Math.Round((decimal)MediaSettingsStatus.CacheMaxBytes / 1024 / 1024 / 1024, 1);
+            PreferredResolutionInput = MediaSettingsStatus.PreferredResolution;
+            EnableUpnpInput = MediaSettingsStatus.EnableUpnp;
             ShareWithoutLimit = MediaSettingsStatus.ShareRatioLimit is null;
             ShareRatioInput = (decimal)(MediaSettingsStatus.ShareRatioLimit ?? 1);
         }
@@ -235,7 +299,7 @@
     {
         try
         {
-            var body = new { cacheRoot = MediaCacheRootInput, cacheMaxBytes = (long)(CacheQuotaGbInput * 1024 * 1024 * 1024), shareRatioLimit = ShareWithoutLimit ? (double?)null : (double)ShareRatioInput };
+            var body = new { cacheRoot = MediaCacheRootInput, cacheMaxBytes = (long)(CacheQuotaGbInput * 1024 * 1024 * 1024), shareRatioLimit = ShareWithoutLimit ? (double?)null : (double)ShareRatioInput, preferredResolution = PreferredResolutionInput, enableUpnp = EnableUpnpInput };
             var response = await Http.PutAsJsonAsync("/api/configuration/media", body);
             if (!response.IsSuccessStatusCode)
             {
@@ -247,6 +311,16 @@
             ShowToast("Réglages enregistrés.");
         }
         catch (HttpRequestException) { ShowToast("Impossible d’enregistrer ces réglages.", "error"); }
+    }
+
+    private static string FormatPortMappings(IReadOnlyList<PortMappingResponse> mappings) =>
+        string.Join(" · ", mappings.Select(mapping => $"{mapping.Protocol} {mapping.PublicPort} → {mapping.PrivatePort}"));
+
+    private async Task RestartServerAsync()
+    {
+        IsRestartingServer = true;
+        try { await JS.InvokeVoidAsync("mediaSettings.restartServer"); }
+        catch (JSException) { IsRestartingServer = false; ShowToast("Impossible de demander le redémarrage du serveur.", "error"); }
     }
 
     private void ShowToast(string message, string variant = "success")
@@ -466,6 +540,11 @@
     private sealed record SelectedIndexerItem(Guid Id, string DefinitionId, string Name, bool RightsConfirmed, DateTimeOffset AddedAt);
     private sealed record TrackerListResponse(List<string> Urls);
     private sealed record CredentialStatusResponse(bool TmdbConfigured, string TmdbSource, bool OpenSubtitlesConfigured, string OpenSubtitlesSource, bool AllConfigured);
-    private sealed record MediaSettingsResponse(string CacheRoot, string ActiveCacheRoot, long CacheMaxBytes, long UsedBytes, double? ShareRatioLimit, bool RequiresRestart);
+    private sealed record MediaSettingsResponse(string CacheRoot, string ActiveCacheRoot, long CacheMaxBytes, long UsedBytes,
+        double? ShareRatioLimit, int PreferredResolution, bool EnableUpnp, bool ActiveEnableUpnp, bool RequiresRestart,
+        PortForwardingResponse? PortForwarding);
+    private sealed record PortForwardingResponse(bool Enabled, List<PortMappingResponse> Created,
+        List<PortMappingResponse> Pending, List<PortMappingResponse> Failed);
+    private sealed record PortMappingResponse(string State, string Protocol, int PrivatePort, int PublicPort);
     private sealed record PopularityStatusResponse(List<JsonElement> Results, DateTimeOffset? LastUpdated, bool IsRefreshing, string? Error, double RefreshIntervalHours);
 }

@@ -28,8 +28,21 @@
                         <small>@download.Progress.ToString("0.0") % · @FormatRate(download.DownloadRate) · @download.AvailablePeers pairs · @download.TrackerCount trackers · DHT @download.DhtState</small>
                         <div class="active-download-actions">
                             @if (download.CanStream) { <AppButton Variant="light" Href="@DownloadPlaybackUrl(download)">▶ Lire maintenant</AppButton> }
+                            @if (!string.Equals(download.DhtState, "Ready", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <button class="text-button" disabled="@(DiagnosingDhtKey == DownloadKey(download))" @onclick="() => DiagnoseDhtAsync(download)">@(DiagnosingDhtKey == DownloadKey(download) ? "Diagnostic…" : DhtDiagnostics.ContainsKey(DownloadKey(download)) ? "Actualiser le diagnostic" : "Diagnostiquer DHT")</button>
+                            }
                             <button class="remove-button" disabled="@(CancelingKey == DownloadKey(download))" @onclick="() => CancelDownloadAsync(download)">@(CancelingKey == DownloadKey(download) ? "Annulation…" : "Annuler")</button>
                         </div>
+                        @if (DhtDiagnostics.TryGetValue(DownloadKey(download), out var diagnostic))
+                        {
+                            <div class="inline-message dht-diagnostic" role="status">
+                                <strong>@diagnostic.Summary</strong>
+                                <span>@diagnostic.Advice</span>
+                                <small>DHT globale @diagnostic.DhtState · @diagnostic.KnownNodes nœuds · UDP depuis démarrage : @FormatSize(diagnostic.BytesSent) envoyés / @FormatSize(diagnostic.BytesReceived) reçus · @diagnostic.TrackerCount trackers@(diagnostic.TorrentAllowsDht is false ? " · DHT interdite par le torrent" : "")</small>
+                                <small>@(diagnostic.LastDhtAnnounce is { } lastAnnounce ? $"Dernière annonce DHT : {lastAnnounce.ToLocalTime():g}" : "Aucune annonce DHT enregistrée pour ce torrent.")</small>
+                            </div>
+                        }
                     </div>
                 }
             </div>
@@ -151,6 +164,8 @@
     private bool IsLoadingProperties;
     private string? OpenMenuPath;
     private CancellationTokenSource? downloadPolling;
+    private readonly Dictionary<string, DhtDiagnosticResponse> DhtDiagnostics = new(StringComparer.OrdinalIgnoreCase);
+    private string? DiagnosingDhtKey;
 
     protected override Task OnAfterRenderAsync(bool firstRender) => firstRender ? LoadAndRenderAsync() : Task.CompletedTask;
 
@@ -214,6 +229,20 @@
         }
         catch (HttpRequestException) { DownloadMessage = "Impossible de joindre le moteur BitTorrent."; }
         finally { CancelingKey = null; }
+    }
+
+    private async Task DiagnoseDhtAsync(MediaDownloadStatus download)
+    {
+        var key = DownloadKey(download);
+        DiagnosingDhtKey = key;
+        try
+        {
+            var diagnostic = await Http.GetFromJsonAsync<DhtDiagnosticResponse>($"/api/downloads/{download.TmdbId}/dht-diagnostic?{DownloadQuery(download)}");
+            if (diagnostic is not null) DhtDiagnostics[key] = diagnostic;
+            else DownloadMessage = "Le diagnostic DHT est indisponible pour ce téléchargement.";
+        }
+        catch (HttpRequestException) { DownloadMessage = "Impossible de récupérer le diagnostic DHT."; }
+        finally { DiagnosingDhtKey = null; }
     }
 
     private static string DisplayMediaName(string name)
@@ -341,6 +370,8 @@
     private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string State, double Progress, long DownloadRate,
         string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
         int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream);
+    private sealed record DhtDiagnosticResponse(string DhtState, bool DhtEnabled, int KnownNodes, long BytesSent, long BytesReceived,
+        bool? TorrentAllowsDht, int TrackerCount, DateTimeOffset? LastDhtAnnounce, string Summary, string Advice);
     private sealed record MediaWatchlistItem(string Key, int TmdbId, string MediaType, string Title, string OriginalLanguage,
         int? Year, int? SeasonNumber, int? EpisodeNumber, string? EpisodeTitle, int? RuntimeMinutes, DateTimeOffset AddedAt, DateTimeOffset? LastCheckedAt);
 }

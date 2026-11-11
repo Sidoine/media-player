@@ -15,6 +15,13 @@ dotnet run --project src/MediaPlayer.Web --urls http://localhost:8080
 dotnet test MediaPlayer.slnx
 ```
 
+Pour lancer le serveur avec `dotnet watch` et permettre aux redémarrages demandés depuis l’interface de se faire sans confirmation interactive :
+
+```powershell
+$env:DOTNET_WATCH_RESTART_ON_RUDE_EDIT = "1"
+dotnet watch --project src/MediaPlayer.Web
+```
+
 En environnement `Development`, l’interface d’accueil Blazor est disponible à la racine (`/`).
 
 Configuration par variables d’environnement : `TMDB_READ_ACCESS_TOKEN` pour TMDB, `OPENSUBTITLES_API_KEY` pour OpenSubtitles et `MEDIA_ROOT` pour le dossier de médias locaux. Avec les secrets .NET, utilisez `TMDB:ReadAccessToken` et `OpenSubtitles:ApiKey`. Docker Compose expose le serveur sur le port 8080 et conserve les réglages locaux dans `./config/media-player`.

@@ -1,4 +1,31 @@
 window.mediaSettings = {
+    restartServer() {
+        void (async () => {
+            try {
+                await fetch('/api/server/restart', { method: 'POST', cache: 'no-store' });
+            } catch { }
+
+            let wasUnavailable = false;
+            const deadline = Date.now() + 60000;
+            while (Date.now() < deadline) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                try {
+                    const response = await fetch('/api/configuration/media', { cache: 'no-store' });
+                    if (!response.ok) wasUnavailable = true;
+                    else if (wasUnavailable) {
+                        window.location.reload();
+                        return;
+                    }
+                } catch {
+                    wasUnavailable = true;
+                }
+            }
+
+            const status = document.querySelector('[data-server-restart-status]');
+            if (status) status.textContent = 'Le serveur ne répond pas encore. Actualisez cette page dans quelques instants.';
+        })();
+    },
+
     init() {
         const menu = document.querySelector('.settings-nav');
         if (!menu || menu.dataset.initialized === 'true') return;

@@ -13,6 +13,7 @@ public sealed class MediaDownloadService(
     ILogger<MediaDownloadService> logger) : IHostedService, IAsyncDisposable
 {
     private readonly string cacheRoot = storageSettings.Current.CacheRoot;
+    private readonly bool enableUpnp = storageSettings.Current.EnableUpnp;
     private readonly string manifestPath = Path.Combine(environment.ContentRootPath, "App_Data", "downloads.json");
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly SemaphoreSlim manifestGate = new(1, 1);
@@ -37,7 +38,7 @@ public sealed class MediaDownloadService(
             AutoSaveLoadDhtCache = true,
             AutoSaveLoadFastResume = true,
             AutoSaveLoadMagnetLinkMetadata = true,
-            AllowPortForwarding = false
+            AllowPortForwarding = enableUpnp
         }.ToSettings();
         engine = new ClientEngine(settings);
 
@@ -96,6 +97,8 @@ public sealed class MediaDownloadService(
     {
         if (!request.RightsConfirmed) throw new InvalidOperationException("La source n’a pas confirmé les droits nécessaires.");
         if (request.TmdbId <= 0 || string.IsNullOrWhiteSpace(request.Title)) throw new InvalidOperationException("Le média TMDB est invalide.");
+        if (!string.Equals(Path.GetFullPath(storageSettings.Current.CacheRoot), Path.GetFullPath(cacheRoot), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Le dossier de cache a changé. Redémarrez le serveur avant de lancer un nouveau téléchargement.");
         if (!Uri.TryCreate(request.Link, UriKind.Absolute, out var uri)
             || (uri.Scheme != "magnet" && uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
             throw new InvalidOperationException("Le lien BitTorrent sélectionné est invalide.");
@@ -151,6 +154,63 @@ public sealed class MediaDownloadService(
     }
 
     public string CacheRoot => cacheRoot;
+    public bool EnableUpnp => enableUpnp;
+
+    public MediaPortForwardingDiagnostic GetPortForwardingDiagnostic()
+    {
+        var mappings = engine?.PortMappings;
+        return new MediaPortForwardingDiagnostic(enableUpnp,
+            MapMappings(mappings?.Created, "Créé"),
+            MapMappings(mappings?.Pending, "En attente"),
+            MapMappings(mappings?.Failed, "Échec"));
+    }
+
+    public MediaDhtDiagnostic? GetDhtDiagnostic(int tmdbId, string mediaType, int? seasonNumber = null, int? episodeNumber = null)
+    {
+        var key = Key(tmdbId, mediaType, seasonNumber, episodeNumber);
+        if (!records.TryGetValue(key, out var record)) return null;
+
+        managers.TryGetValue(key, out var manager);
+        var activeEngine = engine;
+        var dhtEnabled = activeEngine?.Settings.DhtEndPoint is not null;
+        var state = activeEngine?.Dht.State.ToString() ?? "indisponible";
+        var nodeCount = activeEngine?.Dht.NodeCount ?? 0;
+        var bytesSent = activeEngine?.Dht.Monitor.BytesSent ?? 0;
+        var bytesReceived = activeEngine?.Dht.Monitor.BytesReceived ?? 0;
+        var torrentAllowsDht = manager?.CanUseDht;
+        DateTimeOffset? lastAnnounce = manager?.LastDhtAnnounce is { } announced && announced != DateTime.MinValue
+            ? new DateTimeOffset(DateTime.SpecifyKind(announced, DateTimeKind.Utc))
+            : null;
+
+        var summary = !dhtEnabled
+            ? "La DHT est désactivée dans la configuration du moteur."
+            : torrentAllowsDht == false
+                ? "Ce torrent n’autorise pas la découverte de pairs par DHT."
+                : string.Equals(state, "Ready", StringComparison.OrdinalIgnoreCase)
+                    ? "La DHT est prête ; l’absence de pairs peut venir du swarm ou des trackers."
+                    : bytesSent == 0
+                        ? "Aucun paquet DHT n’a encore été envoyé par le moteur."
+                        : bytesReceived == 0
+                            ? "Le moteur envoie des requêtes DHT, mais n’a reçu aucune réponse."
+                            : nodeCount == 0
+                                ? "Des paquets DHT ont été reçus, mais aucun nœud n’a été conservé."
+                                : "Le moteur connaît des nœuds DHT, mais l’initialisation n’est pas terminée.";
+
+        var advice = !dhtEnabled
+            ? "Vérifiez la configuration du moteur BitTorrent."
+            : torrentAllowsDht == false
+                ? "La découverte doit passer par les trackers de la source ; un torrent privé interdit généralement DHT."
+                : bytesSent > 0 && bytesReceived == 0
+                    ? "Cela peut indiquer des réponses UDP bloquées par le pare-feu ou le routeur, ou des routeurs d’amorçage injoignables. Les trackers peuvent continuer à fonctionner indépendamment."
+                    : string.Equals(state, "Ready", StringComparison.OrdinalIgnoreCase)
+                        ? record.TrackerCount > 0
+                            ? $"La source a {record.TrackerCount} tracker(s) configuré(s) ; consultez leur disponibilité si aucun pair n’arrive."
+                            : "Aucun tracker n’est configuré pour cette source ; l’obtention de pairs dépend alors notamment de DHT et PEX."
+                        : "L’amorçage DHT peut prendre un moment. Les trackers configurés restent une autre voie de découverte des pairs.";
+
+        return new MediaDhtDiagnostic(state, dhtEnabled, nodeCount, bytesSent, bytesReceived, torrentAllowsDht,
+            record.TrackerCount, lastAnnounce, summary, advice);
+    }
 
     public long GetStorageUsedBytes() => records.Values.Select(item => item.Directory).Distinct(StringComparer.OrdinalIgnoreCase)
         .Where(Directory.Exists).Sum(DirectorySize);
@@ -276,6 +336,16 @@ public sealed class MediaDownloadService(
             .Where(file => new[] { ".mp4", ".mkv", ".webm", ".m4v", ".avi" }.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
             .Select(file => new CompletedMediaFile(item.Title, file, item.MediaType)))
         .ToArray();
+
+    public bool IsCompletedMediaFilePath(string absolutePath)
+    {
+        var fullPath = Path.GetFullPath(absolutePath);
+        return records.Values.Any(record => record.Completed
+            && IsVideoFile(fullPath)
+            && fullPath.StartsWith(Path.GetFullPath(record.Directory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+            && File.Exists(fullPath));
+    }
 
     private async Task ResumeAsync(MediaDownloadRecord record, CancellationToken ct)
     {
@@ -523,6 +593,8 @@ public sealed class MediaDownloadService(
     }
 
     private static bool ContainsVideo(string path) => Directory.Exists(path) && Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories).Any(IsVideoFile);
+    private static IReadOnlyList<MediaPortMapping> MapMappings(IEnumerable<MonoTorrent.PortForwarding.Mapping>? mappings, string state) =>
+        mappings?.Select(mapping => new MediaPortMapping(state, mapping.Protocol.ToString(), mapping.PrivatePort, mapping.PublicPort)).ToArray() ?? [];
     private static bool IsVideoFile(string path) => new[] { ".mp4", ".mkv", ".webm", ".m4v", ".avi" }
         .Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
     private static long DirectorySize(string path) => Directory.Exists(path)
@@ -533,13 +605,6 @@ public sealed class MediaDownloadService(
     private static string Key(int tmdbId, string? mediaType, int? seasonNumber = null, int? episodeNumber = null) =>
         string.Equals(mediaType, "tv", StringComparison.OrdinalIgnoreCase) && seasonNumber is >= 0 && episodeNumber is > 0
             ? $"tv-{tmdbId}-s{seasonNumber:00}e{episodeNumber:00}" : $"{NormalizeMediaType(mediaType)}-{tmdbId}";
-    private static string ResolveCacheRoot(IWebHostEnvironment env, IConfiguration config)
-    {
-        var path = config["Media:CacheRoot"];
-        return string.IsNullOrWhiteSpace(path) ? Path.Combine(env.ContentRootPath, "App_Data", "media-cache")
-            : Path.GetFullPath(Path.IsPathRooted(path) ? path : Path.Combine(env.ContentRootPath, path));
-    }
-
     public async ValueTask DisposeAsync()
     {
         await StopAsync(CancellationToken.None);
@@ -555,6 +620,11 @@ public sealed record MediaDownloadRequest(int TmdbId, string Title, string Media
 public sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string OriginalLanguage, string State, double Progress,
     long DownloadRate, string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
     int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream, DateTimeOffset? LastViewedAt = null);
+public sealed record MediaDhtDiagnostic(string DhtState, bool DhtEnabled, int KnownNodes, long BytesSent, long BytesReceived,
+    bool? TorrentAllowsDht, int TrackerCount, DateTimeOffset? LastDhtAnnounce, string Summary, string Advice);
+public sealed record MediaPortMapping(string State, string Protocol, int PrivatePort, int PublicPort);
+public sealed record MediaPortForwardingDiagnostic(bool Enabled, IReadOnlyList<MediaPortMapping> Created,
+    IReadOnlyList<MediaPortMapping> Pending, IReadOnlyList<MediaPortMapping> Failed);
 public sealed record MediaDownloadRecord(string Key, int TmdbId, string MediaType, string Title, string OriginalLanguage,
     int? Year, string Source, string ResultTitle, string Link, string? Size, string Directory, bool Completed,
     DateTimeOffset AddedAt, DateTimeOffset? CompletedAt, DateTimeOffset? LastViewedAt, int TrackerCount = 0,

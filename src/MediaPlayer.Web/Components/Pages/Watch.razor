@@ -5,6 +5,7 @@
 @inject HttpClient Http
 @inject IJSRuntime JS
 @inject WatchProgressStore ProgressStore
+@inject media_player.Services.MediaStorageSettingsStore MediaSettings
 
 <PageTitle>@(MediaTitle ?? Download?.Title ?? "Lecture") · Écran</PageTitle>
 
@@ -34,7 +35,7 @@
         <section class="watch-source-picker">
             <div class="eyebrow">@(MediaType == "tv" ? "SÉRIE" : "FILM") · SÉLECTION DE SOURCE</div>
             <h1>Choisir une source</h1>
-            <p class="watch-source-intro">@MediaTitle · Les sources VO en 1080p sont privilégiées automatiquement lorsqu’elles sont disponibles.</p>
+            <p class="watch-source-intro">@MediaTitle · La résolution préférée est choisie automatiquement quand elle distingue une source ; la version originale est privilégiée en cas d’égalité.</p>
             <div class="download-choices">
                 @foreach (var choice in Choices)
                 {
@@ -232,11 +233,13 @@
                 return;
             }
 
-            var preferred = Choices.Where(choice => choice.IsOriginalVersion && choice.Is1080p)
+            var matchingResolution = Choices.Where(choice => choice.Resolution == MediaSettings.Current.PreferredResolution).ToArray();
+            var preferredOriginal = matchingResolution.Where(choice => choice.IsOriginalVersion)
                 .OrderByDescending(choice => choice.PeerCount)
                 .ThenByDescending(choice => choice.Score)
                 .FirstOrDefault();
-            if (preferred is not null) await StartDownloadAsync(preferred);
+            if (preferredOriginal is not null) await StartDownloadAsync(preferredOriginal);
+            else if (matchingResolution.Length == 1) await StartDownloadAsync(matchingResolution[0]);
             else if (Choices.Count == 1) await StartDownloadAsync(Choices[0]);
         }
         catch (HttpRequestException) { ErrorMessage = "Impossible de joindre les sources de téléchargement."; }
@@ -331,15 +334,19 @@
                     .DefaultIfEmpty(0).Max();
                 var bestMatch = titleVariants.FirstOrDefault(tokens => tokens.Count(token => normalized.Contains(token, StringComparison.Ordinal)) == matched);
                 if (matched == 0 || (bestMatch is { Length: > 1 } && matched * 2 < bestMatch.Length)) return null;
-                var is1080 = System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)(?<!\d)1080p?(?!\d)");
+                var resolution = System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)(?<!\d)(2160p?|4k)(?!\d)") ? 2160
+                    : System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)(?<!\d)1080p?(?!\d)") ? 1080
+                    : System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)(?<!\d)720p?(?!\d)") ? 720 : 0;
+                var is1080 = resolution == 1080;
                 var hasFrenchDub = System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)\b(FRENCH|TRUEFRENCH|VFF|VFQ|DUBBED)\b");
                 var isOriginal = string.Equals(media.OriginalLanguage, "fr", StringComparison.OrdinalIgnoreCase) ? hasFrenchDub : !hasFrenchDub;
                 var yearMatch = media.Year is not null && result.Title.Contains(media.Year.Value.ToString(), StringComparison.OrdinalIgnoreCase);
-                var resolutionScore = is1080 ? 40 : System.Text.RegularExpressions.Regex.IsMatch(result.Title, @"(?i)2160p|4k") ? 15 : -10;
+                var resolutionScore = resolution == MediaSettings.Current.PreferredResolution ? 40
+                    : resolution > MediaSettings.Current.PreferredResolution ? 15 : -10;
                 var score = (matched * 10) + resolutionScore + (isOriginal ? 25 : -25) + (yearMatch ? 20 : 0);
                 var peers = (int.TryParse(result.Seeders, out var seeders) ? seeders : 0) + (int.TryParse(result.Leechers, out var leechers) ? leechers : 0);
                 return new DownloadChoice(result.Source, result.Title, result.Link, result.Size, peers, result.RightsConfirmed,
-                    isOriginal, is1080, score, FormatSize(result.Size));
+                    isOriginal, is1080, resolution, score, FormatSize(result.Size));
             })
             .Where(choice => choice is not null)
             .Select(choice => choice!)
@@ -516,7 +523,7 @@
     private sealed record SearchResponse(List<TorrentItem> Results, List<string> Errors);
     private sealed record TorrentItem(string Source, string Title, string Link, string? Size, string? Seeders, string? Leechers, string? Category, bool RightsConfirmed);
     private sealed record DownloadChoice(string Source, string Title, string Link, string? Size, int PeerCount, bool RightsConfirmed,
-        bool IsOriginalVersion, bool Is1080p, int Score, string SizeLabel);
+        bool IsOriginalVersion, bool Is1080p, int Resolution, int Score, string SizeLabel);
     private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string OriginalLanguage, string State, double Progress,
         long DownloadRate, string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,
         int? SeasonNumber, int? EpisodeNumber, long BufferedBytes, long RequiredBufferBytes, bool CanStream);
