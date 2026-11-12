@@ -2,12 +2,13 @@
 @page "/lecture/fichier/{LibraryPath}"
 @layout Layout.PlaybackLayout
 @implements IAsyncDisposable
+@using System.Globalization
 @inject HttpClient Http
 @inject IJSRuntime JS
 @inject WatchProgressStore ProgressStore
 @inject media_player.Services.MediaStorageSettingsStore MediaSettings
 
-<PageTitle>@(MediaTitle ?? Download?.Title ?? "Lecture") · Écran</PageTitle>
+<PageTitle>@(MediaTitle ?? Download?.Title ?? "Lecture") · Bobine</PageTitle>
 
 <div class="watch-page">
     @if (IsLoading)
@@ -70,9 +71,9 @@
     {
         <a class="watch-back" href="@MediaInfoUrl" aria-label="Retour à la fiche" title="Retour à la fiche">←</a>
         <video @ref="VideoElement" class="watch-player" controls autoplay playsinline src="@StreamUrl" aria-label="@(MediaTitle ?? Download?.Title ?? "Lecture vidéo")">
-            @if (FrenchSubtitleAvailable)
+            @if (SubtitleAvailable)
             {
-                <track kind="subtitles" srclang="fr" label="Français" src="@SubtitleUrl" default />
+                <track kind="subtitles" srclang="@SubtitleLanguage" label="@SubtitleLanguageDisplayName" src="@SubtitleUrl" default />
             }
         </video>
         @if (!string.IsNullOrWhiteSpace(SubtitleError))
@@ -108,14 +109,16 @@
     private bool IsOnWatchlist;
     private bool NextEpisodeScheduled;
     private DateTimeOffset NextEpisodeRetryAfter;
-    private bool FrenchSubtitleAvailable;
+    private bool SubtitleAvailable;
     private string StatusMessage = "Connexion au téléchargement…";
     private string? ErrorMessage;
     private string? DownloadMessage;
     private string? StreamUrl;
     private string? SubtitleError;
     private string EpisodeQuery => SeasonNumber is not null && EpisodeNumber is not null ? $"&seasonNumber={SeasonNumber}&episodeNumber={EpisodeNumber}" : "";
-    private string SubtitleUrl => $"/api/downloads/{TmdbId}/subtitles/fr?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}";
+    private string SubtitleLanguage => MediaSettings.ResolvedSubtitleLanguage;
+    private string SubtitleLanguageDisplayName => CultureInfo.GetCultureInfo(SubtitleLanguage).NativeName;
+    private string SubtitleUrl => $"/api/downloads/{TmdbId}/subtitles?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}";
     private string DisplayTitle => SeasonNumber is not null && EpisodeNumber is not null
         ? $"{Media?.Title ?? MediaTitle ?? "Série"} — S{SeasonNumber:00}E{EpisodeNumber:00}{(string.IsNullOrWhiteSpace(EpisodeTitle) ? "" : $" · {EpisodeTitle}")}"
         : MediaTitle ?? Download?.Title ?? "Lecture";
@@ -143,7 +146,7 @@
         NextEpisodeScheduled = false;
         NextEpisodeRetryAfter = DateTimeOffset.MinValue;
         SubtitleError = null;
-        FrenchSubtitleAvailable = false;
+        SubtitleAvailable = false;
         StreamUrl = null;
         IsLoading = true;
 
@@ -430,7 +433,7 @@
         StreamUrl = $"/api/downloads/{TmdbId}/stream?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}";
         if (IsFrenchAudio) return;
         subtitleCancellation = new CancellationTokenSource();
-        _ = CheckFrenchSubtitleAsync(subtitleCancellation.Token);
+        _ = CheckPreferredSubtitleAsync(subtitleCancellation.Token);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -473,17 +476,17 @@
         catch (HttpRequestException) { }
     }
 
-    private async Task CheckFrenchSubtitleAsync(CancellationToken ct)
+    private async Task CheckPreferredSubtitleAsync(CancellationToken ct)
     {
         try
         {
             using var response = await Http.GetAsync(SubtitleUrl, ct);
-            FrenchSubtitleAvailable = response.IsSuccessStatusCode;
+            SubtitleAvailable = response.IsSuccessStatusCode;
             await InvokeAsync(StateHasChanged);
-            if (!FrenchSubtitleAvailable) await ShowSubtitleErrorAsync("Aucun sous-titre français trouvé", ct);
+            if (!SubtitleAvailable) await ShowSubtitleErrorAsync(string.Format(L["Watch_NoSubtitleForLanguage"], SubtitleLanguageDisplayName), ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
-        catch (HttpRequestException) { await ShowSubtitleErrorAsync("Recherche de sous-titres indisponible", ct); }
+        catch (HttpRequestException) { await ShowSubtitleErrorAsync(L["Watch_SubtitleSearchUnavailable"], ct); }
     }
 
     private async Task ShowSubtitleErrorAsync(string message, CancellationToken ct)

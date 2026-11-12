@@ -5,7 +5,7 @@
 {
     <form class="search-box topbar-search" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
         <span>⌕</span>
-        <input @bind="SearchText" @bind:event="oninput" placeholder="@Placeholder" aria-label="Rechercher dans TMDB" />
+        <FormTextField TValue="string" InputOnly="true" UpdateOnInput="true" @bind-Value="SearchText" Placeholder="@Placeholder" AriaLabel="Rechercher dans TMDB" />
         @if (!string.IsNullOrWhiteSpace(SearchText))
         {
             <button type="button" class="clear-search" aria-label="Effacer la recherche" @onclick="ClearAsync">×</button>

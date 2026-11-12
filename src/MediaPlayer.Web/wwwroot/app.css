@@ -27,15 +27,14 @@
 .watching-card:hover { transform: translateY(-3px); background: #22232a; }
 .watching-art { aspect-ratio: 16 / 9; display: flex; align-items: center; justify-content: center; position: relative; background: radial-gradient(ellipse at 50% 115%, #36323a, #17181d 70%); }
 .watching-art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
-.watching-fallback-title { padding: 1.5rem; text-align: center; color: #d8d8dd; font: 700 1rem/1.25 Manrope, sans-serif; }
 .watching-play { display: grid; place-items: center; width: 2.8rem; height: 2.8rem; border-radius: 50%; color: #111; background: #fff; padding-left: .2rem; }
-.watching-kind { position: absolute; left: .7rem; top: .65rem; color: #ddd; font-size: .65rem; letter-spacing: .12em; }
 .watching-card > strong, .watching-card > small { display: block; margin: .65rem .8rem 0; }
 .watching-card > strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .95rem; }
 .watching-card > small { color: #aaa; font-size: .75rem; }
 .watching-progress { height: 4px; margin: .65rem .8rem 0; background: #fff; border-radius: 2px; overflow: hidden; }
 .watching-progress span { display: block; height: 100%; width: 0; max-width: 100%; background: #e50914; }
 .genre-section { padding-top: 18px; }
+.genre-load-sentinel { height: 1px; }
 .poster-carousel { display: flex; gap: 17px; overflow-x: auto; padding: 4px 3px 16px; scroll-snap-type: x mandatory; scrollbar-width: thin; scrollbar-color: #45464d transparent; }
 .poster-carousel .poster-card { flex: 0 0 clamp(145px, 15vw, 205px); scroll-snap-align: start; }
 .poster-card { position: relative; }

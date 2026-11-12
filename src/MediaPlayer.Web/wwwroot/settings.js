@@ -88,3 +88,21 @@ window.mediaSettings = {
         }
     }
 };
+
+window.mediaLocalization = {
+    getPreference() {
+        const match = document.cookie.match(/(?:^|;\s*)MediaPlayerCulture=([^;]+)/);
+        if (!match) return "auto";
+        const value = decodeURIComponent(match[1]);
+        return /(?:^|\|)c=fr(?:\||$)/i.test(value) || /(?:^|\|)uic=fr(?:\||$)/i.test(value) ? "fr" : "en";
+    },
+    setPreference(value) {
+        if (value === "auto") {
+            document.cookie = "MediaPlayerCulture=; path=/; max-age=0; SameSite=Lax";
+        } else {
+            const culture = value === "fr" ? "fr" : "en";
+            document.cookie = `MediaPlayerCulture=c=${culture}|uic=${culture}; path=/; max-age=31536000; SameSite=Lax`;
+        }
+        window.location.reload();
+    }
+};

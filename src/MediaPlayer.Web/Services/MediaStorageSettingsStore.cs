@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace media_player.Services;
@@ -46,7 +47,8 @@ public sealed class MediaStorageSettingsStore(IWebHostEnvironment environment, I
                     return saved with
                     {
                         CacheRoot = Path.GetFullPath(saved.CacheRoot),
-                        PreferredResolution = IsSupportedResolution(saved.PreferredResolution) ? saved.PreferredResolution : 1080
+                        PreferredResolution = IsSupportedResolution(saved.PreferredResolution) ? saved.PreferredResolution : 1080,
+                        SubtitleLanguage = IsSupportedSubtitleLanguage(saved.SubtitleLanguage) ? saved.SubtitleLanguage : "auto"
                     };
             }
         }
@@ -62,7 +64,15 @@ public sealed class MediaStorageSettingsStore(IWebHostEnvironment environment, I
     }
 
     public static bool IsSupportedResolution(int resolution) => resolution is 720 or 1080 or 2160;
+    public static bool IsSupportedSubtitleLanguage(string? language) => language is "auto" or "en" or "fr";
+    public string ResolvedSubtitleLanguage => ResolveSubtitleLanguage(Current.SubtitleLanguage);
+    public static string ResolveSubtitleLanguage(string? preference)
+    {
+        if (preference is "en" or "fr") return preference;
+        var osLanguage = CultureInfo.InstalledUICulture.TwoLetterISOLanguageName.ToLowerInvariant();
+        return osLanguage is "" or "iv" ? "en" : osLanguage;
+    }
 }
 
 public sealed record MediaStorageSettings(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit,
-    int PreferredResolution = 1080, bool EnableUpnp = false);
+    int PreferredResolution = 1080, bool EnableUpnp = false, string SubtitleLanguage = "auto");

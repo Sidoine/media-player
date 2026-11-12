@@ -1,117 +1,116 @@
 @page "/configuration"
+@using System.Globalization
 @using System.Text.Json
 @inject HttpClient Http
 @inject NavigationManager Navigation
 @inject IJSRuntime JS
-<PageTitle>Configuration · Écran</PageTitle>
+<PageTitle>@L["Settings_Title"] · Bobine</PageTitle>
 
 <Toast Message="@ToastMessage" Variant="@ToastVariant" Trigger="@ToastTrigger" OnDismiss="ClearToast" />
 
 <div class="settings-page">
     <a class="back-link" href="/">← Retour au catalogue</a>
-    <div class="settings-title"><div class="eyebrow">PRÉFÉRENCES</div><h1>Configuration</h1><p>Gérez les sources de recherche de votre espace cinéma.</p></div>
+    <div class="settings-title"><h1>@L["Settings_Title"]</h1><p>@L["Settings_ManageSources"]</p></div>
 
     <div class="settings-layout">
-    <nav class="settings-nav" aria-label="Sections de configuration">
-        <button type="button" data-section="dashboard" class="active" aria-current="location">Tableau de bord</button>
-        <button type="button" data-section="media-storage">Stockage des médias</button>
-        <button type="button" data-section="playback-preferences">Résolution préférée</button>
-        <button type="button" data-section="bittorrent-sharing">Partage BitTorrent</button>
-        <button type="button" data-section="api-keys">Clés API</button>
-        <button type="button" data-section="indexes">Indexeurs</button>
-        <button type="button" data-section="bittorrent-trackers">Trackers BitTorrent</button>
-        <button type="button" data-section="definitions-cache">Définitions d’indexeurs</button>
+    <nav class="settings-nav" aria-label="@L["Settings_Sections"]">
+        <button type="button" data-section="dashboard">@L["Settings_Dashboard"]</button>
+        <button type="button" data-section="language-preference">@L["Settings_Language"]</button>
+        <button type="button" data-section="media-storage">@L["Settings_Storage"]</button>
+        <button type="button" data-section="playback-preferences">@L["Settings_PlaybackPreferences"]</button>
+        <button type="button" data-section="bittorrent-sharing">@L["Settings_Sharing"]</button>
+        <button type="button" data-section="api-keys">@L["Settings_ApiKeys"]</button>
+        <button type="button" data-section="indexes">@L["Settings_Indexers"]</button>
     </nav>
     <div class="settings-content">
-    <PanelCard Id="dashboard" Class="indexer-dashboard" Eyebrow="SYNCHRONISATION ET ÉTAT" Title="Tableau de bord">
+    <PanelCard Id="dashboard" Class="indexer-dashboard" Title="@L["Settings_Dashboard"]">
         <div class="indexer-dashboard-grid">
             <article class="dashboard-card"><span class="eyebrow">SOURCES</span><strong>@(Sources.Count + SelectedIndexers.Count)</strong><span>@Sources.Count Torznab · @SelectedIndexers.Count Cardigann</span></article>
             <article class="dashboard-card"><span class="eyebrow">POPULARITÉ DES INDEXEURS</span><strong>@(PopularityStatus?.Results.Count ?? 0) médias en cache</strong><span>@PopularityLastUpdatedLabel</span><span>Actualisation automatique toutes les @PopularityRefreshHours heures</span></article>
-            <article class="dashboard-card"><span class="eyebrow">DÉFINITIONS CARDIGANN</span><strong>@(CacheStatus is { Available: true } ? $"{CacheStatus.DefinitionCount} définitions en cache" : "Cache indisponible")</strong><span>@DefinitionCacheUpdatedLabel</span></article>
+            <article class="dashboard-card"><span class="eyebrow">DÉFINITIONS CARDIGANN</span><strong>@(CacheStatus is { Available: true } ? $"{CacheStatus.DefinitionCount} définitions en cache" : "Cache indisponible")</strong><span>@DefinitionCacheUpdatedLabel</span><AppButton Variant="glass" Class="compact" Disabled="@CacheBusy" OnClick="RefreshDefinitionsAsync">@(CacheBusy ? "…" : L["Library_Refresh"])</AppButton></article>
+            <article class="dashboard-card"><span class="eyebrow">@L["Settings_BittorrentEngine"]</span><strong>@(MediaSettingsStatus is null ? "…" : L["Settings_EngineRunning"])</strong><span>@PortForwardingStatus</span>@if (MediaSettingsStatus is not null) { <span>@L["Settings_ActiveFolder"] @MediaSettingsStatus.ActiveCacheRoot</span> }</article>
         </div>
-    </PanelCard>
-    <PanelCard Id="media-storage" Eyebrow="BIBLIOTHÈQUE LOCALE" Title="Stockage des médias" Description="Choisissez le dossier des prochains téléchargements et la place maximale réservée aux médias. Si le cache est plein, les médias les moins récemment regardés sont supprimés en priorité.">
-        <div class="source-form settings-source-form">
-            <label>Dossier de stockage<input @bind="MediaCacheRootInput" @bind:after="SaveMediaSettingsAsync" placeholder="F:\\Media" required /></label>
-            <label>Quota (Go)<input @bind="CacheQuotaGbInput" @bind:after="SaveMediaSettingsAsync" type="number" min="0.1" max="10240" step="0.1" required /></label>
-        </div>
-        <div class="tracker-settings">
-            <label class="rights-check">
-                <input @bind="EnableUpnpInput" @bind:after="SaveMediaSettingsAsync" type="checkbox" />
-                Autoriser UPnP/NAT-PMP pour rediriger automatiquement les ports BitTorrent
-                <span class="settings-info-tooltip">
-                    <button type="button" aria-label="Informations sur la redirection UPnP" aria-describedby="upnp-tooltip">ⓘ</button>
-                    <span id="upnp-tooltip" role="tooltip">Le routeur doit prendre en charge UPnP ou NAT-PMP. La redirection est demandée au démarrage du moteur BitTorrent.</span>
-                </span>
-            </label>
-        </div>
-        @if (MediaSettingsStatus?.PortForwarding is { } portForwarding)
-        {
-            @if (!portForwarding.Enabled)
-            {
-                <p class="credential-status">La redirection UPnP/NAT-PMP est inactive dans le moteur.</p>
-            }
-            @if (portForwarding.Created.Count > 0)
-            {
-                <p class="credential-status">Mappages créés : @FormatPortMappings(portForwarding.Created)</p>
-            }
-            @if (portForwarding.Pending.Count > 0)
-            {
-                <p class="credential-status">Mappages en attente : @FormatPortMappings(portForwarding.Pending). Le moteur cherche une passerelle compatible.</p>
-            }
-            @if (portForwarding.Failed.Count > 0)
-            {
-                <p class="credential-status">Échec des mappages : @FormatPortMappings(portForwarding.Failed). Le routeur n’a pas confirmé leur création.</p>
-            }
-            @if (portForwarding.Enabled && portForwarding.Created.Count == 0 && portForwarding.Pending.Count == 0 && portForwarding.Failed.Count == 0)
-            {
-                <p class="credential-status">Le moteur n’a signalé aucun mappage UPnP/NAT-PMP.</p>
-            }
-        }
-        @if (MediaSettingsStatus is not null) { <p class="credential-status">@($"{MediaSettingsStatus.UsedBytes / 1024d / 1024 / 1024:0.0}") Go utilisés sur @($"{(double)MediaSettingsStatus.CacheMaxBytes / 1024 / 1024 / 1024:0.0}") Go · dossier actif : @MediaSettingsStatus.ActiveCacheRoot</p> }
+        @if (!string.IsNullOrWhiteSpace(CacheMessage)) { <div class="inline-message">@CacheMessage</div> }
         @if (MediaSettingsStatus?.RequiresRestart == true)
         {
             <div class="inline-message">
                 @if (!string.Equals(MediaSettingsStatus.CacheRoot, MediaSettingsStatus.ActiveCacheRoot, StringComparison.OrdinalIgnoreCase))
                 {
-                    <span>Le nouveau dossier sera utilisé après redémarrage. Les médias déjà présents restent dans leur dossier actuel.</span>
+                    <span>@L["Settings_FolderRestart"]</span>
                 }
                 @if (MediaSettingsStatus.EnableUpnp != MediaSettingsStatus.ActiveEnableUpnp)
                 {
-                    <span>Le changement UPnP/NAT-PMP sera appliqué après redémarrage du moteur.</span>
+                    <span>@L["Settings_UpnpRestart"]</span>
                 }
-                <AppButton Variant="light" Class="compact" Disabled="@IsRestartingServer" OnClick="RestartServerAsync">@(IsRestartingServer ? "Redémarrage…" : "Redémarrer le serveur")</AppButton>
+                <AppButton Variant="light" Class="compact" Disabled="@IsRestartingServer" OnClick="RestartServerAsync">@(IsRestartingServer ? L["Settings_Restarting"] : L["Settings_RestartServer"])</AppButton>
                 <span data-server-restart-status aria-live="polite"></span>
             </div>
         }
     </PanelCard>
-    <PanelCard Id="playback-preferences" Eyebrow="QUALITÉ DES SOURCES" Title="Résolution préférée" Description="Cette résolution est automatiquement choisie lorsqu’elle distingue une source. Si plusieurs sources correspondent, la version originale est privilégiée.">
+    <PanelCard Id="language-preference" Class="language-panel" Title="@L["Settings_Language"]" Description="@L["Settings_LanguageDescription"]">
+        <FormSelect TValue="string" Label="@L["Settings_Language"]" Value="@LanguagePreference" ValueChanged="ChangeLanguageAsync">
+            <option value="auto">@L["Settings_Automatic"]</option>
+            <option value="fr">@L["Language_French"]</option>
+            <option value="en">@L["Language_English"]</option>
+        </FormSelect>
+    </PanelCard>
+    <PanelCard Id="media-storage" Title="@L["Settings_Storage"]" Description="@L["Settings_StorageDescription"]">
         <div class="source-form settings-source-form">
-            <label>Résolution préférée
-                <select @bind="PreferredResolutionInput" @bind:after="SaveMediaSettingsAsync">
-                    <option value="2160">2160p (4K)</option>
-                    <option value="1080">1080p</option>
-                    <option value="720">720p</option>
-                </select>
-            </label>
+            <FormTextField TValue="string" Label="@L["Settings_StorageFolder"]" @bind-Value="MediaCacheRootInput" @bind-Value:after="SaveMediaSettingsAsync" Placeholder="F:\\Media" Required="true" />
+            <FormTextField TValue="decimal" Label="@L["Settings_QuotaGb"]" @bind-Value="CacheQuotaGbInput" @bind-Value:after="SaveMediaSettingsAsync" Type="number" Min="0.1" Max="10240" Step="0.1" Required="true" />
+        </div>
+        @if (MediaSettingsStatus is not null)
+        {
+            var usedGb = MediaSettingsStatus.UsedBytes / 1024d / 1024 / 1024;
+            var quotaGb = MediaSettingsStatus.CacheMaxBytes / 1024d / 1024 / 1024;
+            <div class="storage-usage">
+                <div class="storage-usage-copy"><strong>@string.Format(L["Settings_StorageUsage"], usedGb.ToString("0.0", CultureInfo.CurrentCulture), quotaGb.ToString("0.0", CultureInfo.CurrentCulture))</strong><span>@(StorageUsagePercent.ToString("0", CultureInfo.CurrentCulture) + "%")</span></div>
+                <div class="storage-usage-track" role="progressbar" aria-label="@L["Settings_StorageUsage"]" aria-valuemin="0" aria-valuemax="100" aria-valuenow="@StorageUsagePercent">
+                    <div class="storage-usage-fill @(StorageUsagePercent >= 90 ? "near-limit" : null)" style="@StorageUsageStyle"></div>
+                </div>
+            </div>
+        }
+    </PanelCard>
+    <PanelCard Id="playback-preferences" Title="@L["Settings_PlaybackPreferences"]" Description="@L["Settings_ResolutionDescription"]">
+        <div class="source-form settings-source-form playback-settings-form">
+            <FormSelect TValue="int" Label="@L["Settings_Resolution"]" @bind-Value="PreferredResolutionInput" @bind-Value:after="SaveMediaSettingsAsync">
+                <option value="2160">2160p (4K)</option>
+                <option value="1080">1080p</option>
+                <option value="720">720p</option>
+            </FormSelect>
+            <FormSelect TValue="string" Label="@L["Settings_SubtitleLanguage"]" @bind-Value="SubtitleLanguagePreference" @bind-Value:after="SaveMediaSettingsAsync">
+                <option value="auto">@string.Format(L["Settings_SubtitleOsLanguage"], ServerOsLanguageName)</option>
+                <option value="fr">@L["Language_French"]</option>
+                <option value="en">@L["Language_English"]</option>
+            </FormSelect>
         </div>
     </PanelCard>
-    <PanelCard Id="bittorrent-sharing" Eyebrow="ENVOI APRÈS TÉLÉCHARGEMENT" Title="Partage BitTorrent" Description="Le ratio correspond au volume envoyé divisé par le volume téléchargé. À 0, le partage s’arrête dès la fin du téléchargement.">
-        <div class="tracker-settings">
-            <label class="rights-check"><input @bind="ShareWithoutLimit" @bind:after="SaveMediaSettingsAsync" type="checkbox" /> Partager sans limite jusqu’à la suppression du média</label>
-            @if (!ShareWithoutLimit) { <label>Ratio cible<input @bind="ShareRatioInput" @bind:after="SaveMediaSettingsAsync" type="number" min="0" max="1000" step="0.1" required /></label> }
+    <PanelCard Id="bittorrent-sharing" Title="@L["Settings_Sharing"]" Description="@L["Settings_SharingDescription"]">
+        <div class="tracker-settings sharing-controls">
+            <FormCheckbox Class="rights-check" Label="@L["Settings_UnlimitedSharing"]" @bind-Value="ShareWithoutLimit" @bind-Value:after="SaveMediaSettingsAsync" />
+            @if (!ShareWithoutLimit) { <FormTextField TValue="decimal" Class="sharing-ratio" Label="@L["Settings_TargetRatio"]" @bind-Value="ShareRatioInput" @bind-Value:after="SaveMediaSettingsAsync" Type="number" Min="0" Max="1000" Step="0.1" Required="true" /> }
+            <FormCheckbox Class="rights-check" Label="@L["Settings_AllowUpnp"]" @bind-Value="EnableUpnpInput" @bind-Value:after="SaveMediaSettingsAsync">
+                <span class="settings-info-tooltip"><button type="button" aria-label="@L["Settings_UpnpTooltip"]" aria-describedby="upnp-tooltip">ⓘ</button><span id="upnp-tooltip" role="tooltip">@L["Settings_UpnpTooltip"]</span></span>
+            </FormCheckbox>
+        </div>
+        <div class="sharing-trackers">
+            <div class="sharing-trackers-heading"><h3>@L["Settings_Trackers"]</h3><span class="source-count">@string.Format(L["Settings_ConfiguredTrackers"], TrackerUrlsText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length)</span></div>
+            <p>@L["Settings_TrackersDescription"]</p>
+            <div class="tracker-settings tracker-list">
+                <FormTextField TValue="string" InputOnly="true" Multiline="true" Rows="5" @bind-Value="TrackerUrlsText" @bind-Value:after="SaveTrackersAsync" AriaLabel="@L["Settings_Trackers"]" Placeholder="udp://tracker.example:1337/announce" />
+            </div>
         </div>
     </PanelCard>
-    <PanelCard Id="api-keys" Eyebrow="ACCÈS AUX SERVICES" Title="Clés API" Description="Renseignez les clés TMDB et OpenSubtitles. Elles sont enregistrées localement de façon protégée. Les secrets .NET et variables d’environnement restent prioritaires.">
+    <PanelCard Id="api-keys" Title="@L["Settings_ApiKeys"]" Description="@L["Settings_ApiKeysDescription"]">
         <div class="source-form settings-source-form">
-            <label>TMDB Read Access Token<input @bind="TmdbTokenInput" @bind:after="SaveTmdbCredentialAsync" type="password" autocomplete="new-password" placeholder="@(CredentialStatus?.TmdbSource == "local" ? "Clé locale enregistrée · saisir pour remplacer" : "TMDB Read Access Token")" disabled="@(CredentialStatus?.TmdbSource is "secret" or "environment")" /></label>
-            <label>Clé API OpenSubtitles<input @bind="OpenSubtitlesKeyInput" @bind:after="SaveOpenSubtitlesCredentialAsync" type="password" autocomplete="new-password" placeholder="@(CredentialStatus?.OpenSubtitlesSource == "local" ? "Clé locale enregistrée · saisir pour remplacer" : "Clé API OpenSubtitles")" disabled="@(CredentialStatus?.OpenSubtitlesSource is "secret" or "environment")" /></label>
+            <FormTextField TValue="string" Label="TMDB Read Access Token" @bind-Value="TmdbTokenInput" @bind-Value:after="SaveTmdbCredentialAsync" Type="password" AutoComplete="new-password" Placeholder="@(CredentialStatus?.TmdbSource == "local" ? "Clé locale enregistrée · saisir pour remplacer" : "TMDB Read Access Token")" Disabled="@(CredentialStatus?.TmdbSource is "secret" or "environment")" />
+            <FormTextField TValue="string" Label="Clé API OpenSubtitles" @bind-Value="OpenSubtitlesKeyInput" @bind-Value:after="SaveOpenSubtitlesCredentialAsync" Type="password" AutoComplete="new-password" Placeholder="@(CredentialStatus?.OpenSubtitlesSource == "local" ? "Clé locale enregistrée · saisir pour remplacer" : "Clé API OpenSubtitles")" Disabled="@(CredentialStatus?.OpenSubtitlesSource is "secret" or "environment")" />
         </div>
         @if (CredentialStatus is not null) { <p class="credential-status">TMDB : @CredentialSourceLabel(CredentialStatus.TmdbSource) · OpenSubtitles : @CredentialSourceLabel(CredentialStatus.OpenSubtitlesSource)</p> }
     </PanelCard>
 
-    <PanelCard Id="indexes" Eyebrow="RECHERCHE DE MÉDIAS" Title="Indexeurs" HeaderNote="@($"{Sources.Count + SelectedIndexers.Count} indexeur(s)")" Description="Gérez les sources de recherche, les définitions Cardigann et les indexeurs intégrés à l’application.">
-        <div class="index-actions"><AppButton Variant="light" OnClick='() => OpenIndexerModal("torznab")'>Ajouter un index Torznab ＋</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModalAsync("cardigann")'>Ajouter un index Cardigann ＋</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModalAsync("internal")'>Ajouter un index interne ＋</AppButton></div>
+    <PanelCard Id="indexes" Title="@L["Settings_Indexers"]" HeaderNote="@($"{Sources.Count + SelectedIndexers.Count} indexeur(s)")" Description="@L["Settings_IndexersDescription"]">
+        <div class="index-actions"><AppButton Variant="light" OnClick='() => OpenIndexerModal("torznab")'>@L["Settings_AddTorznab"]</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModalAsync("cardigann")'>@L["Settings_AddCardigann"]</AppButton><AppButton Variant="glass" OnClick='() => OpenIndexerModalAsync("internal")'>@L["Settings_AddInternal"]</AppButton></div>
         @if (!string.IsNullOrWhiteSpace(SourceMessage)) { <div class="inline-message">@SourceMessage</div> }
         @if (!string.IsNullOrWhiteSpace(DefinitionMessage)) { <div class="inline-message">@DefinitionMessage</div> }
         <div class="source-list">
@@ -119,7 +118,7 @@
             {
                 var testKey = $"torznab-{source.Id}";
                 <div class="indexer-entry" @key="source.Id">
-                    <div class="source-row"><span class="source-mark">↗</span><div class="source-info"><strong>@source.Name</strong><small>Torznab · @source.Url</small></div><span class="source-ok">Droits attestés</span><button class="text-button" disabled="@(TestingIndexerKey == testKey)" @onclick='() => TestIndexerAsync("torznab", source.Id, source.Name)'>@(TestingIndexerKey == testKey ? "Test…" : "Tester")</button><button class="remove-button" title="Retirer l’indexeur" @onclick="() => RemoveSourceAsync(source.Id)">Retirer</button></div>
+                    <div class="source-row"><span class="source-mark">↗</span><div class="source-info"><strong>@source.Name</strong><small>Torznab · @source.Url</small></div><span class="source-ok">@L["Settings_SourceRight"]</span><button class="text-button" disabled="@(TestingIndexerKey == testKey)" @onclick='() => TestIndexerAsync("torznab", source.Id, source.Name)'>@(TestingIndexerKey == testKey ? "…" : L["Settings_Test"])</button><button class="remove-button" title="@L["Settings_RemoveIndexer"]" @onclick="() => RemoveSourceAsync(source.Id)">@L["Settings_RemoveIndexer"]</button></div>
                     @if (IndexerTestMessages.TryGetValue(testKey, out var torznabTest)) { <div class="indexer-test-result">@torznabTest</div> }
                 </div>
             }
@@ -127,11 +126,11 @@
             {
                 var testKey = $"cardigann-{source.Id}";
                 <div class="indexer-entry" @key="source.Id">
-                    <div class="source-row"><span class="source-mark">✦</span><div class="source-info"><strong>@source.Name</strong><small>@(source.DefinitionId == "knaben" ? "Index interne · " : "Cardigann · ")@source.DefinitionId</small></div><span class="source-ok">Droits attestés</span><button class="text-button" disabled="@(TestingIndexerKey == testKey)" @onclick='() => TestIndexerAsync("cardigann", source.Id, source.Name)'>@(TestingIndexerKey == testKey ? "Test…" : "Tester")</button><button class="remove-button" title="Retirer l’indexeur" @onclick="() => RemoveSelectedIndexerAsync(source.Id)">Retirer</button></div>
+                    <div class="source-row"><span class="source-mark">✦</span><div class="source-info"><strong>@source.Name</strong><small>@(source.DefinitionId == "knaben" ? "Internal index · " : "Cardigann · ")@source.DefinitionId</small></div><span class="source-ok">@L["Settings_SourceRight"]</span><button class="text-button" disabled="@(TestingIndexerKey == testKey)" @onclick='() => TestIndexerAsync("cardigann", source.Id, source.Name)'>@(TestingIndexerKey == testKey ? "…" : L["Settings_Test"])</button><button class="remove-button" title="@L["Settings_RemoveIndexer"]" @onclick="() => RemoveSelectedIndexerAsync(source.Id)">@L["Settings_RemoveIndexer"]</button></div>
                     @if (IndexerTestMessages.TryGetValue(testKey, out var cardigannTest)) { <div class="indexer-test-result">@cardigannTest</div> }
                 </div>
             }
-            @if (Sources.Count + SelectedIndexers.Count == 0) { <div class="empty-state compact"><strong>Aucun indexeur configuré</strong><p>Ajoutez un catalogue Torznab ou un indexeur Cardigann.</p></div> }
+            @if (Sources.Count + SelectedIndexers.Count == 0) { <div class="empty-state compact"><strong>@L["Settings_NoIndexer"]</strong><p>@L["Settings_AddCatalogHint"]</p></div> }
         </div>
     </PanelCard>
 
@@ -143,10 +142,10 @@
                 {
                     <p class="section-intro">Renseignez l’adresse API Torznab et sa clé d’accès.</p>
                     <form class="modal-form" @onsubmit="AddSourceAsync" @onsubmit:preventDefault>
-                        <label>Nom<input @bind="NewSourceName" placeholder="Ex. Prowlarr" maxlength="100" required /></label>
-                        <label>URL de l’API<input @bind="NewSourceUrl" type="url" placeholder="https://serveur/1/api" required /></label>
-                        <label>Clé API<input @bind="NewSourceKey" type="password" autocomplete="new-password" required /></label>
-                        <label class="rights-check"><input @bind="RightsConfirmed" type="checkbox" /> Je confirme que les médias de cette source sont téléchargeables par moi.</label>
+                        <FormTextField TValue="string" Label="Nom" @bind-Value="NewSourceName" Placeholder="Ex. Prowlarr" MaxLength="100" Required="true" />
+                        <FormTextField TValue="string" Label="URL de l’API" @bind-Value="NewSourceUrl" Type="url" Placeholder="https://serveur/1/api" Required="true" />
+                        <FormTextField TValue="string" Label="Clé API" @bind-Value="NewSourceKey" Type="password" AutoComplete="new-password" Required="true" />
+                        <FormCheckbox Class="rights-check" Label="Je confirme que les médias de cette source sont téléchargeables par moi." @bind-Value="RightsConfirmed" />
                         <AppButton Variant="light" Class="compact" Type="submit" Disabled="@(!RightsConfirmed)">Ajouter l’index</AppButton>
                     </form>
                 }
@@ -154,53 +153,31 @@
                 {
                     <p class="section-intro">@(IndexerModalType == "internal" ? "Choisissez un indexeur fourni directement avec l’application." : "Recherchez une définition Cardigann dans le catalogue externe, puis ajoutez-la à votre liste d’indexeurs.")</p>
                     <form class="definition-picker" @onsubmit="SearchDefinitionsAsync" @onsubmit:preventDefault>
-                        <input @bind="DefinitionQuery" placeholder="Filtrer les indexeurs par nom…" aria-label="Filtrer les définitions d’indexeurs" />
+                        <FormTextField TValue="string" InputOnly="true" @bind-Value="DefinitionQuery" Placeholder="Filtrer les indexeurs par nom…" AriaLabel="Filtrer les définitions d’indexeurs" />
                         <AppButton Variant="glass" Class="compact" Type="submit" Disabled="@IsLoadingDefinitions">@(IsLoadingDefinitions ? "Chargement…" : "Filtrer")</AppButton>
                     </form>
                     <div class="definition-add-row">
-                        <select @bind="SelectedDefinitionId" aria-label="Définition à sélectionner">
+                        <FormSelect TValue="string" InputOnly="true" @bind-Value="SelectedDefinitionId" AriaLabel="Définition à sélectionner">
                             <option value="">@(IndexerModalType == "internal" ? "Choisir un index interne…" : $"Choisir parmi {DefinitionCountText}…")</option>
                             @foreach (var definition in Definitions) { <option value="@definition.Id">@definition.Name · @definition.AccessType</option> }
-                        </select>
+                        </FormSelect>
                         <AppButton Variant="light" Class="compact" Disabled="@(string.IsNullOrWhiteSpace(SelectedDefinitionId) || !DefinitionRightsConfirmed || IsAddingDefinition)" OnClick="AddSelectedIndexerAsync">@(IsAddingDefinition ? "Ajout…" : "Ajouter l’index")</AppButton>
                     </div>
-                    <label class="rights-check definition-consent"><input @bind="DefinitionRightsConfirmed" type="checkbox" /> Je confirme disposer des droits nécessaires pour les médias de cette source.</label>
+                    <FormCheckbox Class="rights-check definition-consent" Label="Je confirme disposer des droits nécessaires pour les médias de cette source." @bind-Value="DefinitionRightsConfirmed" />
                 }
                 @if (IndexerModalType == "torznab" && !string.IsNullOrWhiteSpace(SourceMessage)) { <div class="inline-message">@SourceMessage</div> }
                 @if ((IndexerModalType is "cardigann" or "internal") && !string.IsNullOrWhiteSpace(DefinitionMessage)) { <div class="inline-message">@DefinitionMessage</div> }
             </AppModal>
     }
 
-    <PanelCard Id="bittorrent-trackers" Eyebrow="CONNECTIVITÉ P2P" Title="Trackers BitTorrent" HeaderNote="@($"{TrackerUrlsText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length} configuré(s)")" Description="Ces trackers sont ajoutés aux liens magnet sans trackers. Le DHT reste activé. Une adresse par ligne (UDP, HTTP ou HTTPS).">
-        <div class="tracker-settings">
-            <textarea @bind="TrackerUrlsText" @bind:after="SaveTrackersAsync" rows="5" aria-label="Adresses des trackers BitTorrent" placeholder="udp://tracker.example:1337/announce"></textarea>
-        </div>
-    </PanelCard>
-
-
-    <PanelCard Id="definitions-cache" Class="cache-panel" Eyebrow="SYNCHRONISATION LOCALE" Title="Définitions d’indexeurs" HeaderActionLabel="@(CacheBusy ? "Synchronisation…" : "Actualiser ↻")" HeaderActionDisabled="@CacheBusy" OnHeaderAction="RefreshDefinitionsAsync" Description="Les définitions Cardigann v11 sont conservées dans le cache local et synchronisées au plus une fois par semaine.">
-        @if (CacheStatus is null)
-        {
-            <div class="cache-status">Lecture de l’état du cache…</div>
-        }
-        else if (CacheStatus.Available)
-        {
-            <div class="cache-status"><span class="cache-led"></span><strong>@CacheStatus.DefinitionCount définitions en cache</strong><span>Version @CacheStatus.DefinitionVersion</span></div>
-        }
-        else
-        {
-            <div class="cache-status cache-unavailable"><span class="cache-led"></span>Aucune copie locale disponible. Une tentative sera faite au prochain démarrage.</div>
-        }
-        @if (!string.IsNullOrWhiteSpace(CacheMessage)) { <div class="inline-message">@CacheMessage</div> }
-    </PanelCard>
-
-    <p class="rights-note">L’attestation de droits est fournie par l’utilisateur et n’est pas une vérification indépendante des licences du catalogue.</p>
+    <p class="rights-note">@L["Settings_RightsNotice"]</p>
     </div>
     </div>
 </div>
 
 @code {
     private bool _settingsNavigationInitialized;
+    private string LanguagePreference = "auto";
     private string? IndexerModalType;
 
     private List<SourceItem> Sources = [];
@@ -221,6 +198,7 @@
     private string MediaCacheRootInput = "";
     private decimal CacheQuotaGbInput = 500;
     private int PreferredResolutionInput = 1080;
+    private string SubtitleLanguagePreference = "auto";
     private bool EnableUpnpInput;
     private decimal ShareRatioInput = 1;
     private bool ShareWithoutLimit;
@@ -245,6 +223,22 @@
     private string DefinitionCacheUpdatedLabel => CacheStatus?.FetchedAtUtc is { } fetched
         ? $"Dernière synchronisation : {fetched.ToLocalTime():g}" : "Pas encore synchronisé";
     private int PopularityRefreshHours => PopularityStatus is null ? 8 : (int)Math.Round(PopularityStatus.RefreshIntervalHours);
+    private string ServerOsLanguageName => CultureInfo.InstalledUICulture.NativeName;
+    private double StorageUsagePercent => MediaSettingsStatus is { CacheMaxBytes: > 0 } status
+        ? Math.Clamp(status.UsedBytes * 100d / status.CacheMaxBytes, 0, 100) : 0;
+    private string StorageUsageStyle => $"width: {StorageUsagePercent.ToString("0.##", CultureInfo.InvariantCulture)}%";
+    private string PortForwardingStatus
+    {
+        get
+        {
+            var forwarding = MediaSettingsStatus?.PortForwarding;
+            if (forwarding is null) return "…";
+            if (!forwarding.Enabled) return L["Settings_UpnpDisabled"];
+            if (forwarding.Failed.Count > 0) return L["Settings_UpnpFailedStatus"];
+            if (forwarding.Pending.Count > 0) return L["Settings_UpnpPendingStatus"];
+            return forwarding.Created.Count > 0 ? L["Settings_UpnpActive"] : L["Settings_UpnpNoMappingsStatus"];
+        }
+    }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
@@ -252,8 +246,15 @@
         {
             _settingsNavigationInitialized = true;
             await JS.InvokeVoidAsync("mediaSettings.init");
+            LanguagePreference = await JS.InvokeAsync<string>("mediaLocalization.getPreference");
+            StateHasChanged();
             await LoadAndRenderAsync();
         }
+    }
+
+    private async Task ChangeLanguageAsync(string? preference)
+    {
+        await JS.InvokeVoidAsync("mediaLocalization.setPreference", preference is "fr" or "en" ? preference : "auto");
     }
 
     private async Task LoadAndRenderAsync()
@@ -288,6 +289,7 @@
             MediaCacheRootInput = MediaSettingsStatus.CacheRoot;
             CacheQuotaGbInput = Math.Round((decimal)MediaSettingsStatus.CacheMaxBytes / 1024 / 1024 / 1024, 1);
             PreferredResolutionInput = MediaSettingsStatus.PreferredResolution;
+            SubtitleLanguagePreference = MediaSettingsStatus.SubtitleLanguage;
             EnableUpnpInput = MediaSettingsStatus.EnableUpnp;
             ShareWithoutLimit = MediaSettingsStatus.ShareRatioLimit is null;
             ShareRatioInput = (decimal)(MediaSettingsStatus.ShareRatioLimit ?? 1);
@@ -299,7 +301,7 @@
     {
         try
         {
-            var body = new { cacheRoot = MediaCacheRootInput, cacheMaxBytes = (long)(CacheQuotaGbInput * 1024 * 1024 * 1024), shareRatioLimit = ShareWithoutLimit ? (double?)null : (double)ShareRatioInput, preferredResolution = PreferredResolutionInput, enableUpnp = EnableUpnpInput };
+            var body = new { cacheRoot = MediaCacheRootInput, cacheMaxBytes = (long)(CacheQuotaGbInput * 1024 * 1024 * 1024), shareRatioLimit = ShareWithoutLimit ? (double?)null : (double)ShareRatioInput, preferredResolution = PreferredResolutionInput, enableUpnp = EnableUpnpInput, subtitleLanguage = SubtitleLanguagePreference };
             var response = await Http.PutAsJsonAsync("/api/configuration/media", body);
             if (!response.IsSuccessStatusCode)
             {
@@ -542,7 +544,7 @@
     private sealed record CredentialStatusResponse(bool TmdbConfigured, string TmdbSource, bool OpenSubtitlesConfigured, string OpenSubtitlesSource, bool AllConfigured);
     private sealed record MediaSettingsResponse(string CacheRoot, string ActiveCacheRoot, long CacheMaxBytes, long UsedBytes,
         double? ShareRatioLimit, int PreferredResolution, bool EnableUpnp, bool ActiveEnableUpnp, bool RequiresRestart,
-        PortForwardingResponse? PortForwarding);
+        PortForwardingResponse? PortForwarding, string SubtitleLanguage = "auto", string ResolvedSubtitleLanguage = "en");
     private sealed record PortForwardingResponse(bool Enabled, List<PortMappingResponse> Created,
         List<PortMappingResponse> Pending, List<PortMappingResponse> Failed);
     private sealed record PortMappingResponse(string State, string Protocol, int PrivatePort, int PublicPort);

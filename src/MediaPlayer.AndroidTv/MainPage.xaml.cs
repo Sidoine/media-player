@@ -2,12 +2,17 @@ using System.Net.Http.Json;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Globalization;
+using System.Text;
+using System.Text.RegularExpressions;
 using CommunityToolkit.Maui.Views;
+using MediaPlayer.Localization;
 
 namespace MediaPlayer.AndroidTv;
 
 public partial class MainPage : ContentPage
 {
+    public static MainPage? Current { get; private set; }
     private const string SavedServerKey = "media-player-server-url";
     private const string DefaultServerUrl = "http://brique2:6050";
     private const string PreviousDefaultServerUrl = "http://sidotron:6050";
@@ -22,6 +27,8 @@ public partial class MainPage : ContentPage
     private bool showingPlayer;
     private MediaElement? activePlayer;
     private LibraryItem? activeLibraryItem;
+    private MediaItem? playerReturnDetails;
+    private CancellationTokenSource? playerControlsFadeCancellation;
     private DateTimeOffset lastProgressSavedAt;
     private readonly SemaphoreSlim progressSaveGate = new(1, 1);
     private bool progressSavePending;
@@ -31,6 +38,10 @@ public partial class MainPage : ContentPage
     private List<MediaItem> watchlistMedia = [];
     private List<MediaItem> continueWatching = [];
     private List<GenreRow> genreRows = [];
+    private readonly List<CarouselRow> carouselRows = [];
+    private CarouselFocus? focusedCarouselItem;
+    private CarouselFocus? requestedCarouselItem;
+    private CancellationTokenSource? carouselFocusCancellation;
     private CancellationTokenSource pageLifetime = new();
     private bool serverReachable;
     private bool catalogConfigured = true;
@@ -39,6 +50,7 @@ public partial class MainPage : ContentPage
     public MainPage()
     {
         InitializeComponent();
+        Current = this;
         serverUrl = Preferences.Default.Get(SavedServerKey, DefaultServerUrl);
         if (string.Equals(serverUrl, PreviousDefaultServerUrl, StringComparison.OrdinalIgnoreCase))
         {
@@ -54,9 +66,9 @@ public partial class MainPage : ContentPage
     {
         SettingsButton.IsVisible = !showingPlayer;
         HeaderNavigation.Children.Clear();
-        foreach (var section in new[] { "Accueil", "Films", "Séries", "Bibliothèque" })
+        foreach (var (section, key) in new[] { ("Accueil", "Nav_Home"), ("Films", "Nav_Movies"), ("Séries", "Nav_Series"), ("Bibliothèque", "Nav_Library") })
         {
-            var button = CreateButton(section, isSelected: !showingSettings && !showingDetails && activeSection == section, primary: false);
+            var button = CreateButton(T(key), isSelected: !showingSettings && !showingDetails && activeSection == section, primary: false);
             button.Clicked += async (_, _) => await NavigateToSectionAsync(section);
             HeaderNavigation.Children.Add(button);
         }
@@ -74,7 +86,10 @@ public partial class MainPage : ContentPage
 
     private void BuildHome(string? message = null, bool resetScroll = true)
     {
+        CancelCarouselFocusRequest();
         PageContent.Children.Clear();
+        carouselRows.Clear();
+        focusedCarouselItem = null;
         if (resetScroll) PageScroll.ScrollToAsync(0, 0, false);
 
         var visible = activeSection switch
@@ -86,30 +101,68 @@ public partial class MainPage : ContentPage
 
         var featured = visible.FirstOrDefault();
         Button? focusTarget = null;
-        var hero = new Grid { HeightRequest = 432, BackgroundColor = Color.FromArgb("#17181D") };
+        var heroHeight = Math.Clamp((PageScroll.Height + HeaderBar.Height) * 0.78, 625, 790);
+        var hero = new Grid { HeightRequest = heroHeight, BackgroundColor = Color.FromArgb("#17181D") };
         if (!string.IsNullOrWhiteSpace(featured?.Backdrop))
-            hero.Children.Add(new Image { Source = featured.Backdrop, Aspect = Aspect.AspectFill, Opacity = 0.38 });
-        hero.Children.Add(new BoxView { BackgroundColor = Color.FromArgb("#99090A0E") });
+            hero.Children.Add(new Image { Source = featured.Backdrop, Aspect = Aspect.AspectFill });
+        hero.Children.Add(new BoxView
+        {
+            Background = new LinearGradientBrush(new GradientStopCollection
+            {
+                new(Colors.Black, 0),
+                new(Color.FromArgb("#E6090A0E"), 0.31f),
+                new(Color.FromArgb("#3B090A0E"), 0.77f),
+                new(Color.FromArgb("#17090A0E"), 1)
+            }, new Point(0, 0), new Point(1, 0))
+        });
+        hero.Children.Add(new BoxView
+        {
+            Background = new LinearGradientBrush(new GradientStopCollection
+            {
+                new(Color.FromArgb("#F0090A0E"), 0),
+                new(Colors.Transparent, 0.54f),
+                new(Color.FromArgb("#090A0E"), 1)
+            }, new Point(0, 1), new Point(0, 0))
+        });
         var copy = new VerticalStackLayout
         {
-            Spacing = 13,
-            Padding = new Thickness(80, 28, 40, 34),
+            Spacing = 14,
+            Padding = new Thickness(64, 0, 32, 84),
             VerticalOptions = LayoutOptions.End,
             HorizontalOptions = LayoutOptions.Start,
-            MaximumWidthRequest = 900
+            MaximumWidthRequest = 650
         };
-        copy.Add(Eyebrow(featured is null ? "VOTRE CINÉMA, À LA MAISON" : $"À LA UNE · {(featured.MediaType == "tv" ? "SÉRIE" : "FILM")}"));
-        copy.Add(new Label { Text = featured?.Title ?? "Vos histoires, en grand.", FontSize = 46, FontAttributes = FontAttributes.Bold, TextColor = Colors.White, LineBreakMode = LineBreakMode.TailTruncation });
-        copy.Add(new Label
+        copy.Add(Eyebrow(featured is null ? T("Home_PersonalCinema") : T(featured.MediaType == "tv" ? "Home_FeaturedSeries" : "Home_FeaturedMovie")));
+        copy.Add(new Label { Text = featured?.Title ?? message ?? T("Home_Tagline"), FontSize = 56, FontAttributes = FontAttributes.Bold, TextColor = Colors.White, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2 });
+        var heroOverview = new Label
         {
-            Text = message ?? featured?.Overview ?? "Découvrez les films et séries du moment, puis lancez la lecture depuis votre bibliothèque personnelle.",
-            FontSize = 17, TextColor = Color.FromArgb("#D1D1D6"), LineBreakMode = LineBreakMode.TailTruncation,
-            MaxLines = 3, MaximumWidthRequest = 720
-        });
+            Text = featured?.Overview ?? T("Home_Intro"),
+            FontSize = 16,
+            TextColor = Color.FromArgb("#D1D1D6"),
+            LineBreakMode = LineBreakMode.TailTruncation,
+            MaxLines = 4,
+            MaximumWidthRequest = 560
+        };
+        copy.Add(heroOverview);
         var actions = new HorizontalStackLayout { Spacing = 12 };
         if (featured is not null)
         {
-            var details = CreateButton("ⓘ  Plus d’infos", primary: false);
+            var resume = continueWatching.FirstOrDefault(entry => entry.Id == featured.Id
+                && string.Equals(entry.MediaType, featured.MediaType, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(entry.LibraryPath));
+            var playablePath = featured.LibraryPath ?? resume?.LibraryPath;
+            if (!string.IsNullOrWhiteSpace(playablePath))
+            {
+                var play = CreateButton($"▶  {T("Home_Play")}", primary: true);
+                play.BackgroundColor = Color.FromArgb("#F4F4F6");
+                play.TextColor = Color.FromArgb("#090A0E");
+                play.Clicked += async (_, _) => await OpenLibraryItemAsync(
+                    new LibraryItem(featured.Title, playablePath, featured.Id, featured.MediaType ?? "movie", featured.SeasonNumber,
+                        featured.EpisodeNumber, featured.Poster), resume?.CurrentTimeSeconds ?? featured.CurrentTimeSeconds);
+                actions.Add(play);
+            }
+            var details = CreateButton($"ⓘ  {T("Home_MoreInfo")}", primary: false);
+            details.BackgroundColor = Color.FromArgb("#55222228");
             focusTarget = details;
             details.Clicked += async (_, _) => await OpenDetailsAsync(featured);
             actions.Add(details);
@@ -118,36 +171,29 @@ public partial class MainPage : ContentPage
         hero.Children.Add(copy);
         PageContent.Add(hero);
 
-        var body = new VerticalStackLayout { Padding = new Thickness(70, 28, 70, 52), Spacing = 28 };
-        body.Add(new HorizontalStackLayout
-        {
-            Spacing = 9,
-            Children = { new BoxView { Color = Red, WidthRequest = 8, HeightRequest = 8, CornerRadius = 4, VerticalOptions = LayoutOptions.Center },
-                new Label { Text = catalog.Count == 0 ? "Connexion au serveur…" : "Le meilleur du moment, sélectionné pour vous", TextColor = Muted, FontSize = 15, VerticalOptions = LayoutOptions.Center } }
-        });
+        var body = new VerticalStackLayout { Padding = new Thickness(64, 8, 64, 24), Spacing = 10 };
 
         if (catalog.Count == 0)
         {
-            body.Add(new Label { Text = string.IsNullOrWhiteSpace(message) ? "Chargement du catalogue…" : message, TextColor = Colors.White, FontSize = 22 });
+            body.Add(new Label { Text = string.IsNullOrWhiteSpace(message) ? T("Home_Loading") : message, TextColor = Colors.White, FontSize = 22 });
         }
         else if (visible.Count == 0)
         {
-            body.Add(new Label { Text = "Aucun résultat pour le moment.", TextColor = Muted, FontSize = 20 });
+            body.Add(new Label { Text = T("Home_Empty"), TextColor = Muted, FontSize = 20 });
         }
         else
         {
-            body.Add(Eyebrow(activeSection == "Films" ? "FILMS" : activeSection == "Séries" ? "SÉRIES" : "CHOISI POUR VOUS"));
-            body.Add(new Label { Text = activeSection == "Films" ? "Films du moment" : activeSection == "Séries" ? "Séries du moment" : "Tendances du moment", TextColor = Colors.White, FontSize = 29, FontAttributes = FontAttributes.Bold });
+            body.Add(new Label { Text = T(activeSection == "Films" ? "Home_TrendingMovies" : activeSection == "Séries" ? "Home_TrendingSeries" : "Home_Trending"), TextColor = Colors.White, FontSize = IsWindowsDesktop ? 27 : 22, FontAttributes = FontAttributes.Bold });
             AddPosterRow(body, visible.Take(20).ToList());
         }
         PageContent.Add(body);
         if (activeSection == "Accueil")
         {
-            AddOptionalCarousel(body, "Reprendre la lecture", continueWatching, "À REPRENDRE");
-            AddOptionalCarousel(body, "À regarder", downloadedMedia, "DANS VOTRE CACHE");
-            AddOptionalCarousel(body, "À surveiller", watchlistMedia, "VOTRE LISTE");
+            AddOptionalCarousel(body, T("Home_ContinueWatching"), continueWatching, "À REPRENDRE");
+            AddOptionalCarousel(body, T("Home_CacheTitle"), downloadedMedia, T("Home_CacheEyebrow"));
+            AddOptionalCarousel(body, T("Home_WatchlistTitle"), watchlistMedia, T("Home_WatchlistEyebrow"));
         }
-        AddOptionalCarousel(body, "Populaires dans vos indexeurs", FilterMedia(popularInIndexers), null);
+        AddOptionalCarousel(body, T("Home_IndexerPicks"), FilterMedia(popularInIndexers), null);
         foreach (var row in genreRows.Where(row => row.Media.Count > 0 && (activeSection == "Accueil" || row.AppliesTo(activeSection))))
             AddOptionalCarousel(body, row.Name, FilterMedia(row.Media), null);
         if (resetScroll && focusTarget is not null) MainThread.BeginInvokeOnMainThread(() => focusTarget.Focus());
@@ -156,32 +202,68 @@ public partial class MainPage : ContentPage
     private void AddOptionalCarousel(VerticalStackLayout parent, string title, List<MediaItem> items, string? eyebrow)
     {
         if (items.Count == 0) return;
-        var section = new VerticalStackLayout { Spacing = 10 };
-        if (!string.IsNullOrWhiteSpace(eyebrow)) section.Add(Eyebrow(eyebrow));
-        section.Add(new Label { Text = title, TextColor = Colors.White, FontSize = 28, FontAttributes = FontAttributes.Bold });
+        var section = new VerticalStackLayout { Spacing = 6 };
+        section.Add(new Label { Text = title, TextColor = Colors.White, FontSize = IsWindowsDesktop ? 26 : 22, FontAttributes = FontAttributes.Bold });
         AddPosterRow(section, items.Take(20).ToList());
         parent.Add(section);
     }
 
     private void AddPosterRow(VerticalStackLayout parent, List<MediaItem> items)
     {
+        var posterWidth = GetPosterCardWidth();
+        var posterHeight = posterWidth * 1.5;
+        var carousel = new CarouselRow(items);
         var row = new CollectionView
         {
             ItemsSource = items,
-            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Horizontal) { ItemSpacing = 18 },
+            ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Horizontal) { ItemSpacing = IsWindowsDesktop ? Math.Clamp(posterWidth * 0.08, 16, 24) : 16 },
             ItemSizingStrategy = ItemSizingStrategy.MeasureFirstItem,
             SelectionMode = SelectionMode.None,
-            HeightRequest = 326,
+            HeightRequest = IsWindowsDesktop ? posterHeight + 66 : 140,
+            Margin = new Thickness(0, 4, 0, 4),
             ItemTemplate = new DataTemplate(() =>
             {
                 var host = new ContentView();
+                Border? posterBorder = null;
+                Button? focusTarget = null;
+                void SetPosterFocus(bool focused)
+                {
+                    if (focused)
+                    {
+                        if (host.BindingContext is MediaItem focusedItem)
+                        {
+                            focusedCarouselItem = new CarouselFocus(carousel, items.IndexOf(focusedItem));
+                            requestedCarouselItem ??= focusedCarouselItem;
+                        }
+                        posterBorder!.Stroke = Colors.White;
+                        posterBorder.StrokeThickness = 4;
+                        posterBorder.Scale = 1.05;
+                        posterBorder.ZIndex = 1;
+                    }
+                    else
+                    {
+                        posterBorder!.Stroke = Color.FromArgb("#454752");
+                        posterBorder.StrokeThickness = 1;
+                        posterBorder.Scale = 1;
+                        posterBorder.ZIndex = 0;
+                    }
+                }
+                // The native focus belongs to the Button inside the item template, not its ContentView host.
                 host.BindingContextChanged += (_, _) =>
                 {
-                    if (host.BindingContext is MediaItem item) host.Content = CreatePosterCard(item);
+                    if (host.BindingContext is MediaItem item)
+                    {
+                        host.Content = CreatePosterCard(item, posterWidth, posterHeight, out posterBorder, out focusTarget);
+                        carousel.FocusTargets[items.IndexOf(item)] = focusTarget;
+                        focusTarget.Focused += (_, _) => SetPosterFocus(true);
+                        focusTarget.Unfocused += (_, _) => SetPosterFocus(false);
+                    }
                 };
                 return host;
             })
         };
+        carousel.View = row;
+        carouselRows.Add(carousel);
         parent.Add(row);
     }
 
@@ -192,49 +274,173 @@ public partial class MainPage : ContentPage
         _ => items
     };
 
-    private View CreatePosterCard(MediaItem item)
+    private View CreatePosterCard(MediaItem item, double posterWidth, double posterHeight, out Border posterBorder, out Button hitTarget)
     {
-        var imageGrid = new Grid { HeightRequest = 255, WidthRequest = 172, BackgroundColor = Color.FromArgb("#24252D") };
+        var imageGrid = new Grid { HeightRequest = posterHeight, WidthRequest = posterWidth, BackgroundColor = Color.FromArgb("#24252D") };
         if (!string.IsNullOrWhiteSpace(item.Poster)) imageGrid.Add(new Image { Source = item.Poster, Aspect = Aspect.AspectFill });
         else imageGrid.Add(new Label { Text = item.Title, TextColor = Colors.White, FontAttributes = FontAttributes.Bold, HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, Padding = 12 });
-        var hitTarget = new Button { Text = "", BackgroundColor = Colors.Transparent, BorderWidth = 0, CornerRadius = 0, WidthRequest = 172, HeightRequest = 255, Padding = 0 };
+        hitTarget = new Button { Text = "", BackgroundColor = Colors.Transparent, BorderWidth = 0, CornerRadius = 0, WidthRequest = posterWidth, HeightRequest = posterHeight, Padding = 0 };
         hitTarget.Clicked += async (_, _) =>
         {
             if (!string.IsNullOrWhiteSpace(item.LibraryPath))
-                await OpenLibraryItemAsync(new LibraryItem(item.Title, item.LibraryPath), item.CurrentTimeSeconds);
+                await OpenLibraryItemAsync(new LibraryItem(item.Title, item.LibraryPath, item.Id, item.MediaType ?? "movie",
+                    item.SeasonNumber, item.EpisodeNumber, item.Poster), item.CurrentTimeSeconds);
             else await OpenDetailsAsync(item);
         };
         imageGrid.Add(hitTarget);
 
-        var card = new VerticalStackLayout { WidthRequest = 172, Spacing = 7 };
-        var posterBorder = new Border { Stroke = Color.FromArgb("#35363D"), StrokeThickness = 1, StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 5 }, Content = imageGrid };
-        hitTarget.Focused += (_, _) => { posterBorder.Stroke = Colors.White; posterBorder.StrokeThickness = 4; posterBorder.Scale = 1.06; };
-        hitTarget.Unfocused += (_, _) => { posterBorder.Stroke = Color.FromArgb("#35363D"); posterBorder.StrokeThickness = 1; posterBorder.Scale = 1; };
+        var card = new VerticalStackLayout { WidthRequest = posterWidth, Spacing = IsWindowsDesktop ? 5 : 2, Margin = new Thickness(3, 4, 3, 4) };
+        posterBorder = new Border { Stroke = Color.FromArgb("#454752"), StrokeThickness = 1, StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 5 }, Content = imageGrid };
         card.Add(posterBorder);
-        card.Add(new Label { Text = item.Title, TextColor = Colors.White, FontSize = 15, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 });
-        card.Add(new Label { Text = item.LibraryPath is not null ? item.CurrentTimeSeconds > 0 ? "Reprendre" : "Dans la bibliothèque" : item.MediaType == "tv" ? "Série" : "Film", TextColor = Muted, FontSize = 13 });
+        card.Add(new Label { Text = item.Title, TextColor = Colors.White, FontSize = IsWindowsDesktop ? 16 : 13, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 });
+        card.Add(new Label { Text = item.LibraryPath is not null ? item.CurrentTimeSeconds > 0 ? T("Library_Resume") : T("Library_InLibrary") : T(item.MediaType == "tv" ? "Category_Series" : "Category_Movie"), TextColor = Muted, FontSize = IsWindowsDesktop ? 13 : 11 });
         if (item.DurationSeconds > 0)
-            card.Add(new ProgressBar { Progress = Math.Clamp(item.CurrentTimeSeconds / item.DurationSeconds, 0, 1), ProgressColor = Red, BackgroundColor = Panel, HeightRequest = 5 });
+            card.Add(new ProgressBar { Progress = Math.Clamp(item.CurrentTimeSeconds / item.DurationSeconds, 0, 1), ProgressColor = Red, BackgroundColor = Panel, HeightRequest = 4 });
         return card;
     }
 
+    private bool IsWindowsDesktop => DeviceInfo.Platform == DevicePlatform.WinUI;
+
+    private double GetPosterCardWidth()
+    {
+        if (!IsWindowsDesktop) return 62;
+        var viewportWidth = PageScroll.Width > 0 ? PageScroll.Width : 1280;
+        return Math.Clamp(viewportWidth * 0.12, 145, 210);
+    }
+
+    public bool HandleVerticalDpad(int direction)
+    {
+        if (showingSettings || showingDetails || showingPlayer) return false;
+        var current = requestedCarouselItem ?? focusedCarouselItem;
+        if (current is null)
+        {
+            if (direction < 0 || carouselRows.Count == 0 || carouselRows[0].Items.Count == 0) return false;
+            RequestCarouselFocus(carouselRows[0], 0);
+            return true;
+        }
+        var currentRowIndex = carouselRows.IndexOf(current.Row);
+        var targetRowIndex = currentRowIndex + direction;
+        if (currentRowIndex < 0 || targetRowIndex < 0 || targetRowIndex >= carouselRows.Count) return false;
+
+        var targetRow = carouselRows[targetRowIndex];
+        var targetIndex = Math.Min(current.ItemIndex, targetRow.Items.Count - 1);
+        RequestCarouselFocus(targetRow, targetIndex);
+        return true;
+    }
+
+    public bool HandleHorizontalDpad(int direction)
+    {
+        if (showingSettings || showingDetails || showingPlayer) return false;
+        var current = requestedCarouselItem ?? focusedCarouselItem;
+        if (current is null) return false;
+        var row = current.Row;
+        var targetIndex = current.ItemIndex + direction;
+        if (targetIndex < 0 || targetIndex >= row.Items.Count) return false;
+        RequestCarouselFocus(row, targetIndex);
+        return true;
+    }
+
+    private void RequestCarouselFocus(CarouselRow targetRow, int itemIndex)
+    {
+        var previousTarget = requestedCarouselItem ?? focusedCarouselItem;
+        var scrollPage = previousTarget?.Row != targetRow;
+        requestedCarouselItem = new CarouselFocus(targetRow, itemIndex);
+        var nextRequest = new CancellationTokenSource();
+        var previousRequest = carouselFocusCancellation;
+        carouselFocusCancellation = nextRequest;
+        previousRequest?.Cancel();
+        _ = FocusCarouselItemAsync(targetRow, itemIndex, scrollPage, nextRequest);
+    }
+
+    private void CancelCarouselFocusRequest()
+    {
+        var request = carouselFocusCancellation;
+        carouselFocusCancellation = null;
+        requestedCarouselItem = null;
+        request?.Cancel();
+    }
+
+    private async Task FocusCarouselItemAsync(CarouselRow targetRow, int itemIndex, bool scrollPage, CancellationTokenSource request)
+    {
+        var cancellationToken = request.Token;
+        try
+        {
+            await MainThread.InvokeOnMainThreadAsync(async () =>
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (scrollPage)
+                    await PageScroll.ScrollToAsync(targetRow.View, ScrollToPosition.Center, false);
+
+                cancellationToken.ThrowIfCancellationRequested();
+                var item = targetRow.Items[itemIndex];
+                targetRow.View.ScrollTo(item, position: ScrollToPosition.Center, animate: false);
+                await Task.Delay(16, cancellationToken);
+
+                cancellationToken.ThrowIfCancellationRequested();
+                if (targetRow.FocusTargets.TryGetValue(itemIndex, out var button) && button.IsVisible && button.IsEnabled)
+                    button.Focus();
+#if ANDROID
+                if (button?.IsFocused != true && targetRow.View.Handler?.PlatformView is AndroidX.RecyclerView.Widget.RecyclerView recycler)
+                {
+                    for (var attempt = 0; attempt < 3; attempt++)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        var holder = recycler.FindViewHolderForAdapterPosition(itemIndex);
+                        var focusView = holder?.ItemView;
+                        if (focusView?.Focusable != true) focusView = FindFocusableView(focusView);
+                        if (focusView?.RequestFocus() == true) break;
+                        await Task.Delay(16, cancellationToken);
+                    }
+                }
+#endif
+            });
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            if (ReferenceEquals(carouselFocusCancellation, request)) carouselFocusCancellation = null;
+            request.Dispose();
+        }
+    }
+
+#if ANDROID
+    private static Android.Views.View? FindFocusableView(Android.Views.View? view)
+    {
+        if (view is null) return null;
+        if (view is Android.Views.ViewGroup group)
+        {
+            for (var index = 0; index < group.ChildCount; index++)
+            {
+                var match = FindFocusableView(group.GetChildAt(index));
+                if (match is not null) return match;
+            }
+        }
+        return view.Focusable && view.Enabled && view.Visibility == Android.Views.ViewStates.Visible ? view : null;
+    }
+#endif
+
     private async Task OpenDetailsAsync(MediaItem item)
     {
+        CancelCarouselFocusRequest();
         showingDetails = true;
         PageContent.Clear();
-        PageContent.Add(new Label { Text = "Chargement des informations…", TextColor = Muted, FontSize = 20, Margin = new Thickness(80, 60) });
+        _ = PageScroll.ScrollToAsync(0, 0, false);
+        PageContent.Add(new Label { Text = T("Details_Loading"), TextColor = Muted, FontSize = 20, Margin = new Thickness(80, 60) });
         try
         {
             using var client = CreateClient();
             var type = item.MediaType == "tv" ? "tv" : "movie";
             var details = await client.GetFromJsonAsync<MediaDetails>($"api/catalog/{type}/{item.Id}", pageLifetime.Token);
-            if (details is null) throw new HttpRequestException("Le serveur n’a pas renvoyé de détails.");
+            if (details is null) throw new HttpRequestException(T("Details_NoResponse"));
+            var playableFile = type == "movie" ? await FindLibraryItemAsync(item, details.Title, client) : null;
             PageContent.Clear();
-            var layout = new Grid { HeightRequest = 650, BackgroundColor = Panel };
+            var layout = new Grid { HeightRequest = PageScroll.Height > 0 ? PageScroll.Height : 460, BackgroundColor = Panel };
             if (!string.IsNullOrWhiteSpace(details.Backdrop)) layout.Add(new Image { Source = details.Backdrop, Aspect = Aspect.AspectFill, Opacity = 0.33 });
             layout.Add(new BoxView { BackgroundColor = Color.FromArgb("#CC090A0E") });
-            var text = new VerticalStackLayout { Spacing = 14, Padding = new Thickness(80, 52), VerticalOptions = LayoutOptions.End, MaximumWidthRequest = 1100 };
-            text.Add(Eyebrow(type == "tv" ? "SÉRIE · TMDB" : "FILM · TMDB"));
+            var text = new VerticalStackLayout { Spacing = 10, Padding = new Thickness(80, 34), VerticalOptions = LayoutOptions.End, MaximumWidthRequest = 1100 };
+            text.Add(Eyebrow(T(type == "tv" ? "Details_Series" : "Details_Movie")));
             text.Add(new Label { Text = details.Title, TextColor = Colors.White, FontSize = 46, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation });
             var facts = new List<string>();
             if (details.Year is not null) facts.Add(details.Year.Value.ToString());
@@ -243,25 +449,81 @@ public partial class MainPage : ContentPage
             if (details.SeasonCount is not null) facts.Add($"{details.SeasonCount} saison(s)");
             if (facts.Count > 0) text.Add(new Label { Text = string.Join("     ·     ", facts), TextColor = Colors.White, FontSize = 16 });
             if (details.Genres is { Count: > 0 }) text.Add(new Label { Text = string.Join(" · ", details.Genres), TextColor = Muted, FontSize = 15 });
-            text.Add(new Label { Text = string.IsNullOrWhiteSpace(details.Overview) ? "Aucun synopsis n’est disponible." : details.Overview, TextColor = Color.FromArgb("#D0D1D6"), FontSize = 18, LineHeight = 1.35, MaximumWidthRequest = 850, MaxLines = 5 });
+            Button? playButton = null;
+            if (playableFile is not null)
+            {
+                playButton = CreateButton(T("Details_Play"), primary: true);
+                playButton.HorizontalOptions = LayoutOptions.Start;
+                playButton.Clicked += async (_, _) =>
+                {
+                    var resumePosition = continueWatching.FirstOrDefault(entry => string.Equals(entry.LibraryPath, playableFile.Path, StringComparison.Ordinal))?.CurrentTimeSeconds
+                        ?? (string.Equals(item.LibraryPath, playableFile.Path, StringComparison.Ordinal) ? item.CurrentTimeSeconds : 0);
+                    await OpenLibraryItemAsync(playableFile, resumePosition, item);
+                };
+                text.Add(playButton);
+            }
+            text.Add(new Label { Text = string.IsNullOrWhiteSpace(details.Overview) ? T("Details_NoOverview") : details.Overview, TextColor = Color.FromArgb("#D0D1D6"), FontSize = 18, LineHeight = 1.35, MaximumWidthRequest = 850, MaxLines = 4 });
             layout.Add(text);
             PageContent.Add(layout);
-            FocusActiveNavigationTab();
+            _ = PageScroll.ScrollToAsync(0, 0, false);
+            if (playButton is not null) MainThread.BeginInvokeOnMainThread(() => playButton.Focus());
+            else FocusActiveNavigationTab();
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
         {
             PageContent.Clear();
-            PageContent.Add(ErrorPanel($"Impossible de charger les informations : {ex.Message}", async () => await OpenDetailsAsync(item)));
+            PageContent.Add(ErrorPanel(string.Format(CultureInfo.CurrentCulture, T("Details_LoadingError"), ex.Message), async () => await OpenDetailsAsync(item)));
         }
+    }
+
+    private async Task<LibraryItem?> FindLibraryItemAsync(MediaItem item, string detailsTitle, HttpClient client)
+    {
+        if (!string.IsNullOrWhiteSpace(item.LibraryPath))
+            return new LibraryItem(item.Title, item.LibraryPath, item.Id, item.MediaType ?? "movie", item.SeasonNumber, item.EpisodeNumber, item.Poster);
+
+        var progress = continueWatching.FirstOrDefault(entry => entry.Id == item.Id
+            && string.Equals(entry.MediaType, item.MediaType, StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrWhiteSpace(entry.LibraryPath));
+        if (progress?.LibraryPath is not null)
+            return new LibraryItem(progress.Title, progress.LibraryPath, item.Id, item.MediaType ?? "movie", item.SeasonNumber, item.EpisodeNumber, item.Poster);
+
+        try
+        {
+            var library = await client.GetFromJsonAsync<LibraryResponse>("api/library", pageLifetime.Token);
+            var titles = new[] { item.Title, detailsTitle }.Select(NormalizeMediaTitle).Where(title => title.Length > 0).ToHashSet(StringComparer.Ordinal);
+            return library?.Items.FirstOrDefault(file => file.TmdbId > 0 && titles.Contains(NormalizeMediaTitle(file.Name)));
+        }
+        catch (HttpRequestException)
+        {
+            return null;
+        }
+    }
+
+    private static string NormalizeMediaTitle(string value)
+    {
+        var fileName = value.Replace('\\', '/').Split('/').Last();
+        var title = Path.GetFileNameWithoutExtension(fileName);
+        title = Regex.Replace(title, @"[\s._(-]*(?:\((?:19|20)\d{2}\)|(?:19|20)\d{2})$", string.Empty);
+        var normalized = title.Normalize(NormalizationForm.FormD);
+        var result = new StringBuilder(normalized.Length);
+        foreach (var character in normalized)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark) continue;
+            if (char.IsLetterOrDigit(character)) result.Append(char.ToLowerInvariant(character));
+        }
+        return result.ToString();
     }
 
     private async Task ShowLibraryAsync()
     {
+        CancelCarouselFocusRequest();
+        carouselRows.Clear();
+        focusedCarouselItem = null;
         PageContent.Clear();
         var body = new VerticalStackLayout { Padding = new Thickness(76, 40), Spacing = 20 };
-        body.Add(Eyebrow("VOTRE COLLECTION"));
-        body.Add(new Label { Text = "Ma bibliothèque", TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
-        body.Add(new Label { Text = "Vos médias et les films que vous souhaitez voir.", TextColor = Muted, FontSize = 17 });
+        body.Add(Eyebrow(T("Library_Collection")));
+        body.Add(new Label { Text = T("Library_Title"), TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
+        body.Add(new Label { Text = T("Library_Description"), TextColor = Muted, FontSize = 17 });
         PageContent.Add(body);
         try
         {
@@ -270,33 +532,38 @@ public partial class MainPage : ContentPage
             var library = await client.GetFromJsonAsync<LibraryResponse>("api/library", pageLifetime.Token);
             var files = (library?.Items ?? []).Select(file =>
             {
-                var progress = continueWatching.FirstOrDefault(item => string.Equals(item.LibraryPath, file.Path, StringComparison.Ordinal));
-                return new MediaItem(0, file.Name, null, progress?.Poster, null, null, 0, null, null,
-                    LibraryPath: file.Path, CurrentTimeSeconds: progress?.CurrentTimeSeconds ?? 0, DurationSeconds: progress?.DurationSeconds ?? 0);
+                var progress = continueWatching.FirstOrDefault(item => item.Id == file.TmdbId
+                    && string.Equals(item.MediaType, file.MediaType, StringComparison.OrdinalIgnoreCase)
+                    && item.SeasonNumber == file.SeasonNumber && item.EpisodeNumber == file.EpisodeNumber)
+                    ?? continueWatching.FirstOrDefault(item => string.Equals(item.LibraryPath, file.Path, StringComparison.Ordinal));
+                return new MediaItem(file.TmdbId, file.Name, null, progress?.Poster ?? file.PosterUrl, null, file.MediaType, 0, null, null,
+                    LibraryPath: file.Path, CurrentTimeSeconds: progress?.CurrentTimeSeconds ?? 0, DurationSeconds: progress?.DurationSeconds ?? 0,
+                    SeasonNumber: file.SeasonNumber, EpisodeNumber: file.EpisodeNumber);
             }).ToList();
 
             if (files.Count == 0 && watchlistMedia.Count == 0)
             {
-                body.Add(new Label { Text = "Aucun média ni film surveillé pour le moment.", TextColor = Muted, FontSize = 19, Margin = new Thickness(0, 14) });
+                body.Add(new Label { Text = T("Library_Empty"), TextColor = Muted, FontSize = 19, Margin = new Thickness(0, 14) });
                 return;
             }
 
-            if (files.Count > 0) AddOptionalCarousel(body, "Vos médias", files, "DANS VOTRE BIBLIOTHÈQUE");
-            AddOptionalCarousel(body, "Films à surveiller", watchlistMedia, "VOTRE LISTE");
+            if (files.Count > 0) AddOptionalCarousel(body, T("Library_MediaTitle"), files, T("Library_Collection"));
+            AddOptionalCarousel(body, T("Library_WatchlistTitle"), watchlistMedia, T("Home_WatchlistEyebrow"));
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
         {
-            body.Add(new Label { Text = $"Bibliothèque indisponible : {ex.Message}", TextColor = Color.FromArgb("#FF8C92"), FontSize = 16 });
+            body.Add(new Label { Text = string.Format(CultureInfo.CurrentCulture, T("Library_Unavailable"), ex.Message), TextColor = Color.FromArgb("#FF8C92"), FontSize = 16 });
         }
     }
 
-    private Task OpenLibraryItemAsync(LibraryItem item, double resumePositionSeconds = 0)
+    private Task OpenLibraryItemAsync(LibraryItem item, double resumePositionSeconds = 0, MediaItem? returnToDetails = null)
     {
         if (resumePositionSeconds <= 0)
             resumePositionSeconds = continueWatching.FirstOrDefault(entry => string.Equals(entry.LibraryPath, item.Path, StringComparison.Ordinal))?.CurrentTimeSeconds ?? 0;
         var sourceUrl = new Uri(CreateClient().BaseAddress!, $"api/library/play/{Uri.EscapeDataString(item.Path)}");
         showingPlayer = true;
         activeLibraryItem = item;
+        playerReturnDetails = returnToDetails;
         lastProgressSavedAt = DateTimeOffset.MinValue;
         showingSettings = false;
         showingDetails = false;
@@ -311,42 +578,214 @@ public partial class MainPage : ContentPage
             Source = MediaSource.FromUri(sourceUrl),
             ShouldAutoPlay = true,
             ShouldKeepScreenOn = true,
-            ShouldShowPlaybackControls = true,
+            // Windows' native seek controls can raise SeekRequested off the UI thread and crash WinRT.
+            ShouldShowPlaybackControls = !OperatingSystem.IsWindows(),
             Aspect = Aspect.AspectFit,
             BackgroundColor = Colors.Black,
             HorizontalOptions = LayoutOptions.Fill,
             VerticalOptions = LayoutOptions.Fill
         };
-        player.MediaFailed += async (_, _) => await DisplayAlertAsync("Lecture impossible", "Le lecteur natif n’a pas pu décoder ce fichier. Le conteneur ou le codec audio/vidéo n’est peut-être pas pris en charge par cet appareil.", "OK");
+        Slider? playbackSlider = null;
+        Label? playbackPosition = null;
+        var updatingPlaybackSlider = false;
+        player.MediaFailed += async (_, _) => await DisplayAlertAsync(T("Playback_ErrorTitle"), T("Playback_ErrorMessage"), "OK");
         player.MediaOpened += async (_, _) =>
         {
-            if (resumePositionSeconds > 0) await player.SeekTo(TimeSpan.FromSeconds(resumePositionSeconds));
+            if (playbackSlider is not null)
+            {
+                await MainThread.InvokeOnMainThreadAsync(() =>
+                {
+                    playbackSlider.Maximum = Math.Max(1, player.Duration.TotalSeconds);
+                    playbackPosition!.Text = $"{FormatPlaybackTime(player.Position)} / {FormatPlaybackTime(player.Duration)}";
+                });
+            }
+            if (resumePositionSeconds > 0)
+                await MainThread.InvokeOnMainThreadAsync(() => player.SeekTo(TimeSpan.FromSeconds(resumePositionSeconds)));
         };
         player.PositionChanged += (_, args) =>
         {
+            if (playbackSlider is not null && !updatingPlaybackSlider)
+            {
+                MainThread.BeginInvokeOnMainThread(() =>
+                {
+                    if (playbackSlider is null || updatingPlaybackSlider) return;
+                    updatingPlaybackSlider = true;
+                    playbackSlider.Value = Math.Clamp(args.Position.TotalSeconds, playbackSlider.Minimum, playbackSlider.Maximum);
+                    playbackPosition!.Text = $"{FormatPlaybackTime(args.Position)} / {FormatPlaybackTime(player.Duration)}";
+                    updatingPlaybackSlider = false;
+                });
+            }
             if (args.Position > TimeSpan.Zero && !progressSavePending && DateTimeOffset.UtcNow - lastProgressSavedAt >= TimeSpan.FromSeconds(10))
                 _ = SaveCurrentPlaybackProgressAsync(force: false);
         };
         activePlayer = player;
         FullScreenPlayerHost.Children.Clear();
         FullScreenPlayerHost.Children.Add(player);
+        if (OperatingSystem.IsWindows())
+        {
+            var paused = false;
+            var overlay = new VerticalStackLayout
+            {
+                Spacing = 8,
+                Padding = new Thickness(36, 22, 36, 28),
+                HorizontalOptions = LayoutOptions.Fill,
+                VerticalOptions = LayoutOptions.End,
+                Background = new LinearGradientBrush(new GradientStopCollection
+                {
+                    new(Colors.Transparent, 0),
+                    new(Color.FromArgb("#E6090A0E"), 0.35f),
+                    new(Color.FromArgb("#F5090A0E"), 1)
+                }, new Point(0, 0), new Point(0, 1)),
+                ZIndex = 2
+            };
+            playbackSlider = new Slider { Minimum = 0, Maximum = 1, Value = 0, MinimumTrackColor = Red, MaximumTrackColor = Color.FromArgb("#77FFFFFF"), ThumbColor = Colors.White, HeightRequest = 28 };
+            playbackPosition = new Label { Text = "00:00 / 00:00", TextColor = Color.FromArgb("#E7E7EA"), FontSize = 13, VerticalTextAlignment = TextAlignment.Center };
+            var seekDebounce = new CancellationTokenSource();
+            playbackSlider.ValueChanged += (_, args) =>
+            {
+                if (updatingPlaybackSlider) return;
+                seekDebounce.Cancel();
+                seekDebounce.Dispose();
+                seekDebounce = new CancellationTokenSource();
+                var token = seekDebounce.Token;
+                _ = SeekSliderAfterDelayAsync(player, args.NewValue, token);
+                ShowPlayerControls(overlay, player);
+            };
+
+            var buttonRow = new HorizontalStackLayout { Spacing = 10, VerticalOptions = LayoutOptions.Center };
+            var backButton = CreatePlayerControlButton(returnToDetails is null ? T("Playback_BackToLibrary") : T("Playback_BackToDetails"));
+            backButton.Clicked += async (_, _) => await ReturnFromPlayerAsync();
+            var rewindButton = CreatePlayerControlButton(T("Playback_Rewind10"));
+            rewindButton.Clicked += async (_, _) => await SeekPlayerByAsync(player, -10);
+            var pauseButton = CreatePlayerControlButton(T("Playback_Pause"));
+            pauseButton.Clicked += (_, _) =>
+            {
+                paused = !paused;
+                if (paused)
+                {
+                    player.Pause();
+                    pauseButton.Text = T("Playback_Resume");
+                }
+                else
+                {
+                    player.Play();
+                    pauseButton.Text = T("Playback_Pause");
+                }
+                ShowPlayerControls(overlay, player);
+            };
+            var forwardButton = CreatePlayerControlButton(T("Playback_Forward10"));
+            forwardButton.Clicked += async (_, _) => await SeekPlayerByAsync(player, 10);
+            buttonRow.Children.Add(backButton);
+            buttonRow.Children.Add(rewindButton);
+            buttonRow.Children.Add(pauseButton);
+            buttonRow.Children.Add(forwardButton);
+            buttonRow.Children.Add(playbackPosition);
+            overlay.Children.Add(playbackSlider);
+            overlay.Children.Add(buttonRow);
+            FullScreenPlayerHost.Children.Add(overlay);
+
+            var pointer = new PointerGestureRecognizer();
+            pointer.PointerMoved += (_, _) => ShowPlayerControls(overlay, player);
+            overlay.GestureRecognizers.Add(pointer);
+            player.GestureRecognizers.Add(pointer);
+            var tap = new TapGestureRecognizer();
+            tap.Tapped += (_, _) => ShowPlayerControls(overlay, player);
+            player.GestureRecognizers.Add(tap);
+            ShowPlayerControls(overlay, player);
+        }
+        else
+        {
+            var backButton = CreatePlayerControlButton(returnToDetails is null ? T("Playback_BackToLibrary") : T("Playback_BackToDetails"));
+            backButton.HorizontalOptions = LayoutOptions.Start;
+            backButton.VerticalOptions = LayoutOptions.Start;
+            backButton.Margin = new Thickness(28, 24);
+            backButton.Clicked += async (_, _) => await ReturnFromPlayerAsync();
+            FullScreenPlayerHost.Children.Add(backButton);
+        }
         return Task.CompletedTask;
+    }
+
+    private static Button CreatePlayerControlButton(string text) => new()
+    {
+        Text = text,
+        FontSize = 15,
+        FontAttributes = FontAttributes.Bold,
+        TextColor = Colors.White,
+        BackgroundColor = Color.FromArgb("#CC202127"),
+        BorderColor = Color.FromArgb("#66FFFFFF"),
+        BorderWidth = 1,
+        CornerRadius = 8,
+        Padding = new Thickness(16, 10)
+    };
+
+    private static string T(string key) => SharedText.Get(key);
+
+    private static string FormatPlaybackTime(TimeSpan time) => time.TotalHours >= 1
+        ? time.ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)
+        : time.ToString(@"mm\:ss", CultureInfo.InvariantCulture);
+
+    private async Task SeekSliderAfterDelayAsync(MediaElement player, double seconds, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(300, token);
+            if (activePlayer == player)
+                await MainThread.InvokeOnMainThreadAsync(() => player.SeekTo(TimeSpan.FromSeconds(seconds)));
+        }
+        catch (OperationCanceledException) { }
+    }
+
+    private async Task SeekPlayerByAsync(MediaElement player, double seconds)
+    {
+        if (player.Duration <= TimeSpan.Zero) return;
+        var position = TimeSpan.FromSeconds(Math.Clamp((player.Position + TimeSpan.FromSeconds(seconds)).TotalSeconds, 0, player.Duration.TotalSeconds));
+        await MainThread.InvokeOnMainThreadAsync(() => player.SeekTo(position));
+    }
+
+    private void ShowPlayerControls(VisualElement controls, MediaElement player)
+    {
+        playerControlsFadeCancellation?.Cancel();
+        var cancellation = new CancellationTokenSource();
+        playerControlsFadeCancellation = cancellation;
+        controls.InputTransparent = false;
+        controls.CancelAnimations();
+        _ = controls.FadeToAsync(1, 180);
+        _ = HidePlayerControlsAfterDelayAsync(controls, player, cancellation.Token);
+    }
+
+    private async Task HidePlayerControlsAfterDelayAsync(VisualElement controls, MediaElement player, CancellationToken token)
+    {
+        try
+        {
+            await Task.Delay(TimeSpan.FromSeconds(4), token);
+            if (activePlayer != player) return;
+            await controls.FadeToAsync(0, 450);
+            controls.InputTransparent = true;
+        }
+        catch (OperationCanceledException) { }
     }
 
     private async Task ReturnFromPlayerAsync()
     {
+        playerControlsFadeCancellation?.Cancel();
+        playerControlsFadeCancellation = null;
         await SaveCurrentPlaybackProgressAsync(force: true);
         activePlayer?.Stop();
         if (activePlayer is not null) activePlayer.Source = null;
         activePlayer = null;
         activeLibraryItem = null;
+        var returnToDetails = playerReturnDetails;
+        playerReturnDetails = null;
         FullScreenPlayerHost.Children.Clear();
         FullScreenPlayerHost.IsVisible = false;
         HeaderBar.IsVisible = true;
         PageScroll.IsVisible = true;
         showingPlayer = false;
         BuildNavigation();
-        await ShowLibraryAsync();
+        if (returnToDetails is not null)
+            await OpenDetailsAsync(returnToDetails);
+        else
+            await ShowLibraryAsync();
     }
 
     private async Task SaveCurrentPlaybackProgressAsync(bool force)
@@ -362,18 +801,29 @@ public partial class MainPage : ContentPage
         {
             if (activePlayer != player || activeLibraryItem != item || player.Duration <= TimeSpan.Zero || player.Position <= TimeSpan.Zero) return;
             using var client = CreateClient();
-            var request = new PlaybackProgressRequest(0, "library", item.Name, player.Position.TotalSeconds,
-                player.Duration.TotalSeconds, LibraryPath: item.Path);
+            var context = playerReturnDetails;
+            var tmdbId = context?.Id is > 0 ? context.Id : item.TmdbId;
+            var mediaType = context?.MediaType is "movie" or "tv" ? context.MediaType : item.MediaType;
+            if (tmdbId <= 0 || mediaType is not ("movie" or "tv")) return;
+            var title = context?.Title ?? item.Name;
+            var poster = context?.Poster ?? item.PosterUrl;
+            var seasonNumber = context?.SeasonNumber ?? item.SeasonNumber;
+            var episodeNumber = context?.EpisodeNumber ?? item.EpisodeNumber;
+            var request = new PlaybackProgressRequest(tmdbId, mediaType, title, player.Position.TotalSeconds,
+                player.Duration.TotalSeconds, poster, seasonNumber, episodeNumber, item.Path);
             lastProgressSavedAt = DateTimeOffset.UtcNow;
             using var response = await client.PostAsJsonAsync("api/watch-progress", request, pageLifetime.Token);
             if (response.IsSuccessStatusCode)
             {
                 var current = player.Position.TotalSeconds;
                 var duration = player.Duration.TotalSeconds;
-                continueWatching = continueWatching.Where(entry => !string.Equals(entry.LibraryPath, item.Path, StringComparison.Ordinal)).ToList();
+                continueWatching = continueWatching.Where(entry => !(entry.Id == tmdbId
+                    && string.Equals(entry.MediaType, mediaType, StringComparison.OrdinalIgnoreCase)
+                    && entry.SeasonNumber == seasonNumber && entry.EpisodeNumber == episodeNumber)).ToList();
                 if (current / duration < .95 && duration - current > 30)
-                    continueWatching.Insert(0, new MediaItem(0, item.Name, null, null, null, "library", 0, null, null,
-                        LibraryPath: item.Path, CurrentTimeSeconds: current, DurationSeconds: duration));
+                    continueWatching.Insert(0, new MediaItem(tmdbId, title, null, poster, null, mediaType, 0, null, null,
+                        LibraryPath: item.Path, CurrentTimeSeconds: current, DurationSeconds: duration,
+                        SeasonNumber: seasonNumber, EpisodeNumber: episodeNumber));
             }
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException) { }
@@ -401,7 +851,7 @@ public partial class MainPage : ContentPage
             serverReachable = response is not null;
             catalogConfigured = response?.Configured != false;
             if (showingSettings) return;
-            BuildHome(response?.Configured == false ? "Le catalogue TMDB n’est pas configuré sur le serveur." : null);
+            BuildHome(response?.Configured == false ? T("Server_CatalogNotConfigured") : null);
             _ = LoadHomeCarouselsAsync(catalogConfigured);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or UriFormatException)
@@ -410,8 +860,8 @@ public partial class MainPage : ContentPage
             catalog = [];
             if (!showingSettings)
             {
-                BuildHome(discoverOnFailure ? "Serveur introuvable. Recherche automatique sur le réseau…" : "Impossible de joindre le serveur. Vérifiez l’adresse dans les réglages.");
-                var settings = CreateButton("Configurer l’adresse du serveur", primary: true);
+                BuildHome(discoverOnFailure ? T("Server_NotFoundSearching") : T("Server_CannotReach"));
+                var settings = CreateButton(T("Settings_ConfigureServer"), primary: true);
                 settings.Clicked += OnSettingsClicked;
                 PageContent.Add(settings);
                 if (discoverOnFailure) _ = DiscoverOnStartupAsync();
@@ -435,7 +885,7 @@ public partial class MainPage : ContentPage
         }
         else
         {
-            MainThread.BeginInvokeOnMainThread(() => BuildHome("Aucun serveur MediaPlayer trouvé. Vérifiez que le serveur et le téléviseur sont sur le même réseau."));
+            MainThread.BeginInvokeOnMainThread(() => BuildHome(T("Server_NoServers")));
         }
     }
 
@@ -529,7 +979,7 @@ public partial class MainPage : ContentPage
                         using var response = await client.GetAsync("api/catalog/local-status", cancellationToken);
                         if (!response.IsSuccessStatusCode) continue;
                         var state = await response.Content.ReadFromJsonAsync<LocalMediaStateResponse>(cancellationToken: cancellationToken);
-                        if (state is not null) found.Add(new DiscoveredServer(address.ToString(), port, url, $"MediaPlayer · {address}:{port}"));
+                        if (state is not null) found.Add(new DiscoveredServer(address.ToString(), port, url, $"Bobine · {address}:{port}"));
                         break;
                     }
                     catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or UriFormatException or System.Text.Json.JsonException) { }
@@ -563,7 +1013,8 @@ public partial class MainPage : ContentPage
             var entries = await client.GetFromJsonAsync<List<WatchProgressEntry>>("api/watch-progress", pageLifetime.Token) ?? [];
             continueWatching = entries.Where(item => !item.IsCompleted).Select(item => new MediaItem(item.TmdbId, item.Title,
                 null, item.PosterUrl ?? FindCatalogPoster(item.TmdbId, item.MediaType), null, item.MediaType, 0, null, null,
-                LibraryPath: item.LibraryPath, CurrentTimeSeconds: item.CurrentTimeSeconds, DurationSeconds: item.DurationSeconds)).ToList();
+                LibraryPath: item.LibraryPath, CurrentTimeSeconds: item.CurrentTimeSeconds, DurationSeconds: item.DurationSeconds,
+                SeasonNumber: item.SeasonNumber, EpisodeNumber: item.EpisodeNumber)).ToList();
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { continueWatching = []; }
     }
@@ -618,7 +1069,7 @@ public partial class MainPage : ContentPage
             var media = (await Task.WhenAll(requests)).SelectMany(items => items)
                 .DistinctBy(item => $"{item.MediaType}-{item.Id}", StringComparer.OrdinalIgnoreCase)
                 .OrderByDescending(item => item.Popularity).Take(20).ToList();
-            return new GenreRow(genre.Name, genre.MovieId.HasValue, genre.TvId.HasValue, media);
+            return new GenreRow(T(genre.ResourceKey), genre.MovieId.HasValue, genre.TvId.HasValue, media);
         }));
         genreRows = rows.ToList();
     }
@@ -647,13 +1098,19 @@ public partial class MainPage : ContentPage
     private static List<MediaItem> SetPoster(List<MediaItem> items, int id, string mediaType, string poster) => items
         .Select(item => item.Id == id && item.MediaType == mediaType ? item with { Poster = poster } : item).ToList();
 
-    private HttpClient CreateClient() => new() { BaseAddress = new Uri(serverUrl.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(12) };
+    private HttpClient CreateClient()
+    {
+        var client = new HttpClient { BaseAddress = new Uri(serverUrl.TrimEnd('/') + "/"), Timeout = TimeSpan.FromSeconds(12) };
+        var language = CultureInfo.CurrentUICulture.Name;
+        if (!string.IsNullOrWhiteSpace(language)) client.DefaultRequestHeaders.AcceptLanguage.ParseAdd(language);
+        return client;
+    }
 
     private static View ErrorPanel(string message, Func<Task> retry)
     {
         var layout = new VerticalStackLayout { Padding = new Thickness(80, 60), Spacing = 18 };
         layout.Add(new Label { Text = message, TextColor = Color.FromArgb("#FF8C92"), FontSize = 18 });
-        var button = CreateButton("Réessayer", primary: true);
+        var button = CreateButton(T("Common_Retry"), primary: true);
         button.Clicked += async (_, _) => await retry();
         layout.Add(button);
         return layout;
@@ -688,7 +1145,7 @@ public partial class MainPage : ContentPage
         if (!value.Contains("://", StringComparison.Ordinal)) value = "http://" + value;
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("http" or "https") || uri.IsLoopback || uri.Host is "0.0.0.0" or "::")
         {
-            error = $"Utilisez l’adresse du serveur sur le réseau, par exemple {DefaultServerUrl}.";
+            error = string.Format(CultureInfo.CurrentCulture, T("Server_InvalidAddress"), DefaultServerUrl);
             return false;
         }
         normalized = uri.ToString().TrimEnd('/');
@@ -707,6 +1164,7 @@ public partial class MainPage : ContentPage
     protected override void OnDisappearing()
     {
         base.OnDisappearing();
+        CancelCarouselFocusRequest();
         pageLifetime.Cancel();
     }
 
@@ -714,23 +1172,24 @@ public partial class MainPage : ContentPage
 
     private void ShowSettings(List<DiscoveredServer>? initialResults = null)
     {
+        CancelCarouselFocusRequest();
         showingSettings = true;
         showingDetails = false;
         BuildNavigation();
         PageContent.Clear();
         var panel = new VerticalStackLayout { Padding = new Thickness(80, 66), Spacing = 18, MaximumWidthRequest = 900, HorizontalOptions = LayoutOptions.Start };
         panel.Add(Eyebrow("CONNEXION"));
-        panel.Add(new Label { Text = "Adresse du serveur", TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
-        panel.Add(new Label { Text = "Indiquez l’adresse de votre serveur MediaPlayer sur le réseau local.", TextColor = Muted, FontSize = 18 });
+        panel.Add(new Label { Text = T("Settings_ServerAddress"), TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
+        panel.Add(new Label { Text = T("Settings_ServerDescription"), TextColor = Muted, FontSize = 18 });
         var address = new Entry { Text = serverUrl, Placeholder = "http://brique2:6050", TextColor = Colors.White, PlaceholderColor = Muted, BackgroundColor = Panel, FontSize = 20, ReturnType = ReturnType.Go };
         var status = new Label { TextColor = Color.FromArgb("#FF8C92"), FontSize = 15, IsVisible = false };
         var results = new VerticalStackLayout { Spacing = 8 };
-        var discover = CreateButton("Détecter les serveurs sur le réseau", primary: false);
+        var discover = CreateButton(T("Settings_DiscoverServers"), primary: false);
         discover.Clicked += async (_, _) =>
         {
             discover.IsEnabled = false;
             status.TextColor = Muted;
-            status.Text = "Recherche sur le réseau local…";
+            status.Text = T("Settings_SearchingNetwork");
             status.IsVisible = true;
             results.Children.Clear();
             var found = await DiscoverServersAsync();
@@ -738,11 +1197,11 @@ public partial class MainPage : ContentPage
             if (found.Count == 0)
             {
                 status.TextColor = Color.FromArgb("#FF8C92");
-                status.Text = "Aucun serveur MediaPlayer trouvé sur ce réseau.";
+                status.Text = T("Settings_NoServer");
                 return;
             }
             status.TextColor = Muted;
-            status.Text = found.Count == 1 ? "Un serveur trouvé :" : $"{found.Count} serveurs trouvés :";
+            status.Text = string.Format(CultureInfo.CurrentCulture, T("Settings_ServersFound"), found.Count);
             AddDiscoveredServerButtons(found, results, address, status);
         };
         var connect = CreateButton("Se connecter", primary: true);
@@ -756,7 +1215,7 @@ public partial class MainPage : ContentPage
         if (initialResults is { Count: > 0 })
         {
             status.TextColor = Muted;
-            status.Text = initialResults.Count == 1 ? "Un serveur trouvé :" : $"{initialResults.Count} serveurs trouvés :";
+            status.Text = string.Format(CultureInfo.CurrentCulture, T("Settings_ServersFound"), initialResults.Count);
             status.IsVisible = true;
             AddDiscoveredServerButtons(initialResults, results, address, status);
         }
@@ -789,29 +1248,36 @@ public partial class MainPage : ContentPage
         serverUrl = normalized;
         Preferences.Default.Set(SavedServerKey, serverUrl);
         status.TextColor = Muted;
-        status.Text = "Connexion au serveur…";
+        status.Text = T("Settings_Connecting");
         status.IsVisible = true;
         catalog = [];
         await LoadCatalogAsync(discoverOnFailure: false);
         if (!serverReachable)
         {
             status.TextColor = Color.FromArgb("#FF8C92");
-            status.Text = "Serveur inaccessible. Vérifiez l’adresse et le réseau.";
+            status.Text = T("Settings_ServerUnavailable");
             return;
         }
 
         showingSettings = false;
         activeSection = "Accueil";
         BuildNavigation();
-        BuildHome(catalogConfigured ? null : "Le catalogue TMDB n’est pas configuré sur le serveur.");
+        BuildHome(catalogConfigured ? null : T("Server_CatalogNotConfigured"));
         _ = LoadHomeCarouselsAsync(catalogConfigured);
     }
 
     private sealed record CatalogResponse(bool Configured, List<MediaItem> Results);
-    private sealed record MediaItem(int Id, string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, string? OriginalLanguage, int? Year, double Popularity = 0, string? LibraryPath = null, double CurrentTimeSeconds = 0, double DurationSeconds = 0);
+    private sealed record MediaItem(int Id, string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, string? OriginalLanguage, int? Year, double Popularity = 0, string? LibraryPath = null, double CurrentTimeSeconds = 0, double DurationSeconds = 0, int? SeasonNumber = null, int? EpisodeNumber = null);
     private sealed record MediaDetails(string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, int? Year, List<string>? Genres, int? RuntimeMinutes, int? SeasonCount);
     private sealed record LibraryResponse(List<LibraryItem> Items);
-    private sealed record LibraryItem(string Name, string Path);
+    private sealed record LibraryItem(string Name, string Path, int TmdbId, string MediaType, int? SeasonNumber = null, int? EpisodeNumber = null, string? PosterUrl = null);
+    private sealed record CarouselFocus(CarouselRow Row, int ItemIndex);
+    private sealed class CarouselRow(List<MediaItem> items)
+    {
+        public CollectionView View { get; set; } = null!;
+        public List<MediaItem> Items { get; } = items;
+        public Dictionary<int, Button> FocusTargets { get; } = [];
+    }
     private sealed record DiscoveredServer(string Address, int Port, string Url, string DisplayName);
     private sealed record WatchProgressEntry(int TmdbId, string MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds, double ProgressPercent, DateTimeOffset UpdatedAt, string? PosterUrl = null, int? SeasonNumber = null, int? EpisodeNumber = null, bool IsCompleted = false, string? LibraryPath = null);
     private sealed record PlaybackProgressRequest(int TmdbId, string MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds, string? PosterUrl = null, int? SeasonNumber = null, int? EpisodeNumber = null, string? LibraryPath = null);
@@ -819,7 +1285,7 @@ public partial class MainPage : ContentPage
     private sealed record LocalMediaEntry(int TmdbId, string MediaType, string Title, string? OriginalLanguage = null, int? Year = null, bool Completed = false, DateTimeOffset? LastViewedAt = null);
     private sealed record IndexerPopularResponse(List<IndexerPopularItem>? Results);
     private sealed record IndexerPopularItem(int Id, string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, string? OriginalLanguage, int? Year, double TmdbPopularity);
-    private sealed record GenreDefinition(string Name, int? MovieId, int? TvId);
+    private sealed record GenreDefinition(string ResourceKey, int? MovieId, int? TvId);
     private sealed class GenreRow(string name, bool hasMovies, bool hasSeries, List<MediaItem> media)
     {
         public string Name { get; } = name;
@@ -831,13 +1297,13 @@ public partial class MainPage : ContentPage
 
     private static readonly GenreDefinition[] GenreDefinitions =
     [
-        new("Action & aventure", 28, 10759), new("Animation", 16, 16), new("Comédie", 35, 35),
-        new("Crime", 80, 80), new("Documentaire", 99, 99), new("Drame", 18, 18),
-        new("Familial", 10751, 10751), new("Science-fiction & fantastique", 878, 10765),
-        new("Histoire", 36, null), new("Horreur", 27, null), new("Mystère", 9648, 9648),
-        new("Romance", 10749, null), new("Thriller", 53, null), new("Guerre & politique", 10752, 10768),
-        new("Western", 37, 37), new("Jeunesse", null, 10762), new("Réalité", null, 10764),
-        new("Soap", null, 10766), new("Talk-show", null, 10767)
+        new("Genre_ActionAdventure", 28, 10759), new("Genre_Animation", 16, 16), new("Genre_Comedy", 35, 35),
+        new("Genre_Crime", 80, 80), new("Genre_Documentary", 99, 99), new("Genre_Drama", 18, 18),
+        new("Genre_Family", 10751, 10751), new("Genre_ScienceFantasy", 878, 10765),
+        new("Genre_History", 36, null), new("Genre_Horror", 27, null), new("Genre_Mystery", 9648, 9648),
+        new("Genre_Romance", 10749, null), new("Genre_Thriller", 53, null), new("Genre_WarPolitics", 10752, 10768),
+        new("Genre_Western", 37, 37), new("Genre_Youth", null, 10762), new("Genre_Reality", null, 10764),
+        new("Genre_Soap", null, 10766), new("Genre_TalkShow", null, 10767)
     ];
 }
 

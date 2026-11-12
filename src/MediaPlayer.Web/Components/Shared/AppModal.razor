@@ -4,7 +4,7 @@
         <section class="app-modal-panel @PanelClass" style="@PanelStyle" role="@Role" aria-modal="true" aria-label="@AriaLabel" aria-labelledby="@AriaLabelledBy" @onclick:stopPropagation="true">
             @if (ShowCloseButton)
             {
-                <button class="app-modal-close" type="button" aria-label="Fermer" @onclick="OnClose">×</button>
+                <button class="app-modal-close" type="button" aria-label="@L["Common_Close"]" @onclick="OnClose">×</button>
             }
             @ChildContent
         </section>

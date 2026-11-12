@@ -2,6 +2,10 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using media_player.Components;
 using media_player.Services;
+using MediaPlayer.Localization;
+using Microsoft.AspNetCore.Localization;
+using Microsoft.AspNetCore.OutputCaching;
+using System.Globalization;
 
 if (args.Length == 2 && string.Equals(args[0], "--signal-dotnet-watch", StringComparison.Ordinal))
 {
@@ -18,6 +22,7 @@ builder.Services.AddSingleton<SelectedIndexerStore>();
 builder.Services.AddSingleton<BittorrentTrackerStore>();
 builder.Services.AddSingleton<MediaStorageSettingsStore>();
 builder.Services.AddSingleton<MediaDownloadService>();
+builder.Services.AddSingleton<CachedMediaAssociationStore>();
 builder.Services.AddSingleton<WatchProgressStore>();
 builder.Services.AddSingleton<TorrentCatalogSearchService>();
 builder.Services.AddSingleton<MediaWatchlistStore>();
@@ -25,6 +30,16 @@ builder.Services.AddSingleton<MediaAvailabilityWorker>();
 builder.Services.AddSingleton<IndexerPopularityService>();
 builder.Services.AddSingleton<MediaPropertiesService>();
 builder.Services.AddSingleton<ApiCredentialStore>();
+builder.Services.AddSingleton<TmdbImageCacheService>();
+builder.Services.AddHttpClient("tmdb-images", client => client.BaseAddress = new Uri("https://image.tmdb.org/t/p/"));
+builder.Services.AddOutputCache(options =>
+{
+    options.AddPolicy("Catalog", policy => policy.Expire(TimeSpan.FromHours(4))
+        .VaryByValue(context => new KeyValuePair<string, string>("culture",
+            context.Request.Cookies["MediaPlayerCulture"] ?? context.Request.Headers.AcceptLanguage.ToString()))
+        .Tag("catalog"));
+    options.AddPolicy("CatalogImages", policy => policy.Expire(TimeSpan.FromDays(1)));
+});
 builder.Services.AddSingleton<ServerRestartService>();
 if (!playwrightMode)
 {
@@ -33,9 +48,15 @@ if (!playwrightMode)
     builder.Services.AddHostedService(sp => sp.GetRequiredService<MediaDownloadService>());
 }
 builder.Services.AddHttpClient("opensubtitles", client => client.Timeout = TimeSpan.FromSeconds(20));
-builder.Services.AddSingleton<FrenchSubtitleService>();
+builder.Services.AddSingleton<SubtitleService>();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
-builder.Services.AddScoped(sp => new HttpClient { BaseAddress = new Uri(sp.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>().BaseUri) });
+builder.Services.AddLocalization();
+builder.Services.AddScoped(sp =>
+{
+    var client = new HttpClient { BaseAddress = new Uri(sp.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>().BaseUri) };
+    client.DefaultRequestHeaders.AcceptLanguage.ParseAdd(CultureInfo.CurrentUICulture.Name);
+    return client;
+});
 builder.Services.AddHttpClient("indexer-definitions", client =>
 {
     client.Timeout = TimeSpan.FromMinutes(2);
@@ -62,14 +83,24 @@ builder.Services.AddHttpClient("tmdb", (sp, client) =>
     if (!string.IsNullOrWhiteSpace(token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 });
 var app = builder.Build();
+static string TmdbLanguage() => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "fr" ? "fr-FR" : "en-US";
+var supportedCultures = new[] { new CultureInfo("en"), new CultureInfo("fr") };
+var localizationOptions = new RequestLocalizationOptions()
+    .SetDefaultCulture("en")
+    .AddSupportedCultures(supportedCultures.Select(culture => culture.Name).ToArray())
+    .AddSupportedUICultures(supportedCultures.Select(culture => culture.Name).ToArray());
+localizationOptions.RequestCultureProviders.Insert(0, new CookieRequestCultureProvider { CookieName = "MediaPlayerCulture" });
+app.UseRequestLocalization(localizationOptions);
 app.UseStaticFiles();
+app.UseOutputCache();
 app.UseAntiforgery();
 if (playwrightMode) app.UseMiddleware<PlaywrightApiMockMiddleware>();
 
 app.MapGet("/api/configuration/credentials", (ApiCredentialStore credentials) => Results.Json(credentials.GetStatus()));
-app.MapPut("/api/configuration/credentials", async (ApiCredentialsInput input, ApiCredentialStore credentials, CancellationToken ct) =>
+app.MapPut("/api/configuration/credentials", async (ApiCredentialsInput input, ApiCredentialStore credentials, IOutputCacheStore outputCache, CancellationToken ct) =>
 {
     await credentials.SaveLocalAsync(input.TmdbReadAccessToken, input.OpenSubtitlesApiKey, ct);
+    await outputCache.EvictByTagAsync("catalog", ct);
     return Results.Json(credentials.GetStatus());
 });
 app.MapGet("/api/configuration/media", (MediaStorageSettingsStore settings, MediaDownloadService downloads) =>
@@ -83,6 +114,8 @@ app.MapGet("/api/configuration/media", (MediaStorageSettingsStore settings, Medi
         usedBytes = downloads.GetStorageUsedBytes(),
         shareRatioLimit = value.ShareRatioLimit,
         preferredResolution = value.PreferredResolution,
+        subtitleLanguage = value.SubtitleLanguage,
+        resolvedSubtitleLanguage = settings.ResolvedSubtitleLanguage,
         enableUpnp = value.EnableUpnp,
         activeEnableUpnp = downloads.EnableUpnp,
         portForwarding = downloads.GetPortForwardingDiagnostic(),
@@ -100,6 +133,9 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
     var preferredResolution = input.PreferredResolution ?? settings.Current.PreferredResolution;
     if (!MediaStorageSettingsStore.IsSupportedResolution(preferredResolution))
         return Results.BadRequest(new { error = "La résolution préférée doit être 720p, 1080p ou 2160p." });
+    var subtitleLanguage = input.SubtitleLanguage?.Trim().ToLowerInvariant() ?? settings.Current.SubtitleLanguage;
+    if (!MediaStorageSettingsStore.IsSupportedSubtitleLanguage(subtitleLanguage))
+        return Results.BadRequest(new { error = "La langue des sous-titres doit être auto, en ou fr." });
     var enableUpnp = input.EnableUpnp ?? settings.Current.EnableUpnp;
 
     string cacheRoot;
@@ -117,7 +153,7 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
         return Results.BadRequest(new { error = "Le dossier choisi ne peut pas être utilisé par le serveur." });
     }
 
-    var saved = await settings.SaveAsync(new MediaStorageSettings(cacheRoot, input.CacheMaxBytes, input.ShareRatioLimit, preferredResolution, enableUpnp), ct);
+    var saved = await settings.SaveAsync(new MediaStorageSettings(cacheRoot, input.CacheMaxBytes, input.ShareRatioLimit, preferredResolution, enableUpnp, subtitleLanguage), ct);
     await downloads.ApplySharingPolicyAsync(ct);
     return Results.Json(new
     {
@@ -127,6 +163,8 @@ app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, M
         usedBytes = downloads.GetStorageUsedBytes(),
         shareRatioLimit = saved.ShareRatioLimit,
         preferredResolution = saved.PreferredResolution,
+        subtitleLanguage = saved.SubtitleLanguage,
+        resolvedSubtitleLanguage = settings.ResolvedSubtitleLanguage,
         enableUpnp = saved.EnableUpnp,
         activeEnableUpnp = downloads.EnableUpnp,
         portForwarding = downloads.GetPortForwardingDiagnostic(),
@@ -175,7 +213,8 @@ app.MapGet("/api/catalog", async (IHttpClientFactory clients, string? query, Can
 {
     var token = app.Services.GetRequiredService<ApiCredentialStore>().TmdbToken;
     if (string.IsNullOrWhiteSpace(token)) return Results.Json(new { configured = false, results = Array.Empty<object>() });
-    var route = string.IsNullOrWhiteSpace(query) ? "trending/all/week?language=fr-FR" : $"search/multi?query={Uri.EscapeDataString(query)}&include_adult=false&language=fr-FR";
+    var language = TmdbLanguage();
+    var route = string.IsNullOrWhiteSpace(query) ? $"trending/all/week?language={language}" : $"search/multi?query={Uri.EscapeDataString(query)}&include_adult=false&language={language}";
     try
     {
         using var response = await clients.CreateClient("tmdb").GetAsync(route, ct);
@@ -187,8 +226,8 @@ app.MapGet("/api/catalog", async (IHttpClientFactory clients, string? query, Can
                 id = x.TryGetProperty("id", out var id) ? id.GetInt32() : 0,
                 title = x.TryGetProperty("title", out var t) ? t.GetString() : x.TryGetProperty("name", out var n) ? n.GetString() : "Sans titre",
                 overview = x.TryGetProperty("overview", out var o) ? o.GetString() : "",
-                poster = x.TryGetProperty("poster_path", out var p) && p.ValueKind == JsonValueKind.String ? "https://image.tmdb.org/t/p/w500" + p.GetString() : null,
-                backdrop = x.TryGetProperty("backdrop_path", out var b) && b.ValueKind == JsonValueKind.String ? "https://image.tmdb.org/t/p/original" + b.GetString() : null,
+                poster = x.TryGetProperty("poster_path", out var p) && p.ValueKind == JsonValueKind.String ? TmdbImageCacheService.ToLocalUrl(p.GetString(), "w500") : null,
+                backdrop = x.TryGetProperty("backdrop_path", out var b) && b.ValueKind == JsonValueKind.String ? TmdbImageCacheService.ToLocalUrl(b.GetString(), "original") : null,
                 mediaType = x.TryGetProperty("media_type", out var m) ? m.GetString() : "movie",
                 rating = x.TryGetProperty("vote_average", out var v) ? v.GetDouble() : 0,
                 originalLanguage = x.TryGetProperty("original_language", out var language) ? language.GetString() : null,
@@ -197,13 +236,13 @@ app.MapGet("/api/catalog", async (IHttpClientFactory clients, string? query, Can
         return Results.Json(new { configured = true, results });
     }
     catch (HttpRequestException) { return Results.Problem("Impossible de joindre TMDB.", statusCode: 502); }
-});
+}).CacheOutput("Catalog");
 app.MapGet("/api/catalog/genre/{mediaType}/{genreId:int}", async (string mediaType, int genreId, IHttpClientFactory clients, CancellationToken ct) =>
 {
     if (mediaType is not ("movie" or "tv") || genreId <= 0) return Results.BadRequest();
     var token = app.Services.GetRequiredService<ApiCredentialStore>().TmdbToken;
     if (string.IsNullOrWhiteSpace(token)) return Results.Json(new { configured = false, results = Array.Empty<object>() });
-    var route = $"discover/{mediaType}?with_genres={genreId}&sort_by=popularity.desc&include_adult=false&language=fr-FR&page=1";
+    var route = $"discover/{mediaType}?with_genres={genreId}&sort_by=popularity.desc&include_adult=false&language={TmdbLanguage()}&page=1";
     try
     {
         using var response = await clients.CreateClient("tmdb").GetAsync(route, ct);
@@ -214,8 +253,8 @@ app.MapGet("/api/catalog/genre/{mediaType}/{genreId:int}", async (string mediaTy
             id = x.TryGetProperty("id", out var id) ? id.GetInt32() : 0,
             title = x.TryGetProperty("title", out var t) ? t.GetString() : x.TryGetProperty("name", out var n) ? n.GetString() : "Sans titre",
             overview = x.TryGetProperty("overview", out var o) ? o.GetString() : "",
-            poster = x.TryGetProperty("poster_path", out var p) && p.ValueKind == JsonValueKind.String ? "https://image.tmdb.org/t/p/w500" + p.GetString() : null,
-            backdrop = x.TryGetProperty("backdrop_path", out var b) && b.ValueKind == JsonValueKind.String ? "https://image.tmdb.org/t/p/original" + b.GetString() : null,
+            poster = x.TryGetProperty("poster_path", out var p) && p.ValueKind == JsonValueKind.String ? TmdbImageCacheService.ToLocalUrl(p.GetString(), "w500") : null,
+            backdrop = x.TryGetProperty("backdrop_path", out var b) && b.ValueKind == JsonValueKind.String ? TmdbImageCacheService.ToLocalUrl(b.GetString(), "original") : null,
             mediaType,
             rating = x.TryGetProperty("vote_average", out var v) ? v.GetDouble() : 0,
             popularity = x.TryGetProperty("popularity", out var popularity) ? popularity.GetDouble() : 0,
@@ -225,7 +264,7 @@ app.MapGet("/api/catalog/genre/{mediaType}/{genreId:int}", async (string mediaTy
         return Results.Json(new { configured = true, results });
     }
     catch (HttpRequestException) { return Results.Problem("Impossible de joindre le catalogue TMDB.", statusCode: 502); }
-});
+}).CacheOutput("Catalog");
 
 app.MapGet("/api/catalog/{mediaType}/{id:int}", async (string mediaType, int id, IHttpClientFactory clients, CancellationToken ct) =>
 {
@@ -234,7 +273,7 @@ app.MapGet("/api/catalog/{mediaType}/{id:int}", async (string mediaType, int id,
     if (string.IsNullOrWhiteSpace(token)) return Results.Json(new { configured = false }, statusCode: 503);
     try
     {
-        using var response = await clients.CreateClient("tmdb").GetAsync($"{mediaType}/{id}?language=fr-FR&append_to_response=videos,credits", ct);
+        using var response = await clients.CreateClient("tmdb").GetAsync($"{mediaType}/{id}?language={TmdbLanguage()}&append_to_response=videos,credits", ct);
         if (!response.IsSuccessStatusCode) return Results.Problem("TMDB n’a pas répondu correctement.", statusCode: (int)response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
         var item = json.RootElement;
@@ -272,7 +311,7 @@ app.MapGet("/api/catalog/{mediaType}/{id:int}", async (string mediaType, int id,
                 seasonNumber = season.TryGetProperty("season_number", out var seasonNumber) ? seasonNumber.GetInt32() : 0,
                 name = season.TryGetProperty("name", out var seasonName) ? seasonName.GetString() : "Saison",
                 episodeCount = season.TryGetProperty("episode_count", out var count) ? count.GetInt32() : 0,
-                poster = season.TryGetProperty("poster_path", out var seasonPoster) && seasonPoster.ValueKind == JsonValueKind.String ? "https://image.tmdb.org/t/p/w500" + seasonPoster.GetString() : null
+                poster = season.TryGetProperty("poster_path", out var seasonPoster) && seasonPoster.ValueKind == JsonValueKind.String ? TmdbImageCacheService.ToLocalUrl(seasonPoster.GetString(), "w500") : null
             }).ToArray()
             : [];
         string? trailerUrl = null;
@@ -294,8 +333,8 @@ app.MapGet("/api/catalog/{mediaType}/{id:int}", async (string mediaType, int id,
             title,
             originalTitle = Text(mediaType == "movie" ? "original_title" : "original_name"),
             overview = Text("overview"),
-            poster = poster is null ? null : "https://image.tmdb.org/t/p/w500" + poster,
-            backdrop = backdrop is null ? null : "https://image.tmdb.org/t/p/original" + backdrop,
+            poster = TmdbImageCacheService.ToLocalUrl(poster, "w500"),
+            backdrop = TmdbImageCacheService.ToLocalUrl(backdrop, "original"),
             mediaType,
             rating = item.TryGetProperty("vote_average", out var rating) && rating.TryGetDouble(out var score) ? score : 0,
             originalLanguage = Text("original_language"),
@@ -312,7 +351,7 @@ app.MapGet("/api/catalog/{mediaType}/{id:int}", async (string mediaType, int id,
         });
     }
     catch (HttpRequestException) { return Results.Problem("Impossible de joindre TMDB.", statusCode: 502); }
-});
+}).CacheOutput("Catalog");
 
 app.MapGet("/api/catalog/tv/{id:int}/season/{seasonNumber:int}", async (int id, int seasonNumber, IHttpClientFactory clients, CancellationToken ct) =>
 {
@@ -321,7 +360,7 @@ app.MapGet("/api/catalog/tv/{id:int}/season/{seasonNumber:int}", async (int id, 
     if (string.IsNullOrWhiteSpace(token)) return Results.Json(new { configured = false }, statusCode: 503);
     try
     {
-        using var response = await clients.CreateClient("tmdb").GetAsync($"tv/{id}/season/{seasonNumber}?language=fr-FR", ct);
+        using var response = await clients.CreateClient("tmdb").GetAsync($"tv/{id}/season/{seasonNumber}?language={TmdbLanguage()}", ct);
         if (!response.IsSuccessStatusCode) return Results.Problem("TMDB n’a pas répondu correctement.", statusCode: (int)response.StatusCode);
         using var json = JsonDocument.Parse(await response.Content.ReadAsStreamAsync(ct));
         var season = json.RootElement;
@@ -333,7 +372,7 @@ app.MapGet("/api/catalog/tv/{id:int}/season/{seasonNumber:int}", async (int id, 
                 episodeNumber = episode.TryGetProperty("episode_number", out var episodeValue) ? episodeValue.GetInt32() : 0,
                 title = episode.TryGetProperty("name", out var name) ? name.GetString() : "Épisode",
                 overview = episode.TryGetProperty("overview", out var overview) ? overview.GetString() : null,
-                still = episode.TryGetProperty("still_path", out var still) && still.ValueKind == JsonValueKind.String ? "https://image.tmdb.org/t/p/w500" + still.GetString() : null,
+                still = episode.TryGetProperty("still_path", out var still) && still.ValueKind == JsonValueKind.String ? TmdbImageCacheService.ToLocalUrl(still.GetString(), "w500") : null,
                 airDate = episode.TryGetProperty("air_date", out var date) ? date.GetString() : null,
                 runtimeMinutes = episode.TryGetProperty("runtime", out var runtime) && runtime.ValueKind == JsonValueKind.Number && runtime.TryGetInt32(out var minutes) ? minutes : (int?)null
             }).ToArray()
@@ -341,7 +380,13 @@ app.MapGet("/api/catalog/tv/{id:int}/season/{seasonNumber:int}", async (int id, 
         return Results.Json(new { seasonNumber, episodes });
     }
     catch (HttpRequestException) { return Results.Problem("Impossible de récupérer les épisodes sur TMDB.", statusCode: 502); }
-});
+}).CacheOutput("Catalog");
+
+app.MapGet("/api/catalog/image/{size}/{fileName}", async (string size, string fileName, TmdbImageCacheService cache, CancellationToken ct) =>
+{
+    var image = await cache.GetCachedImageAsync(size, fileName, ct);
+    return image is null ? Results.NotFound() : Results.File(image.Value.Path, image.Value.ContentType);
+}).CacheOutput("CatalogImages");
 
 app.MapGet("/api/torrent-catalogs", async (TorrentCatalogStore store, CancellationToken ct) =>
     Results.Json((await store.GetAll(ct)).Select(x => new { x.Id, x.Name, x.Url, x.RightsConfirmed, x.AddedAt })));
@@ -368,7 +413,17 @@ app.MapGet("/api/torrent-catalogs/search", async (string query, string? sourceTy
     return Results.Json(await search.SearchAsync(query, ct, sourceType, sourceId));
 });
 app.MapGet("/api/catalog/indexer-popular", async (IndexerPopularityService popular, CancellationToken ct) =>
-    Results.Json(await popular.GetSnapshotAsync(ct)));
+{
+    var snapshot = await popular.GetSnapshotAsync(ct);
+    return Results.Json(snapshot with
+    {
+        Results = snapshot.Results.Select(item => item with
+        {
+            Poster = TmdbImageCacheService.ToLocalUrlFromRemote(item.Poster),
+            Backdrop = TmdbImageCacheService.ToLocalUrlFromRemote(item.Backdrop)
+        }).ToList()
+    });
+});
 app.MapGet("/api/catalog/local-status", async (MediaDownloadService downloads, MediaWatchlistStore watchlist, CancellationToken ct) =>
     Results.Json(new { downloads = downloads.GetMediaStatuses(), watchlist = await watchlist.GetAllAsync(ct) }));
 
@@ -382,11 +437,11 @@ app.MapGet("/api/downloads/{tmdbId:int}", async (int tmdbId, string? mediaType, 
     var status = await downloads.GetStatusAsync(tmdbId, mediaType ?? "movie", seasonNumber, episodeNumber, ct);
     return status is null ? Results.NotFound() : Results.Json(status);
 });
-app.MapGet("/api/downloads/{tmdbId:int}/subtitles/fr", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, MediaDownloadService downloads, FrenchSubtitleService subtitles, CancellationToken ct) =>
+app.MapGet("/api/downloads/{tmdbId:int}/subtitles", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, MediaDownloadService downloads, SubtitleService subtitles, CancellationToken ct) =>
 {
     var type = mediaType ?? "movie";
     var status = await downloads.GetStatusAsync(tmdbId, type, seasonNumber, episodeNumber, ct);
-    if (status is null || string.Equals(status.OriginalLanguage, "fr", StringComparison.OrdinalIgnoreCase)) return Results.NotFound();
+    if (status is null || string.Equals(status.OriginalLanguage, subtitles.ResolvedLanguage, StringComparison.OrdinalIgnoreCase)) return Results.NotFound();
     var videoPath = downloads.GetCachedVideoPath(tmdbId, type, seasonNumber, episodeNumber) ?? downloads.GetActiveVideoPath(tmdbId, type, seasonNumber, episodeNumber);
     if (videoPath is null) return Results.NotFound();
     var content = await subtitles.GetSubtitleAsync(videoPath, status.Title, ct);
@@ -407,14 +462,18 @@ app.MapGet("/api/downloads/{tmdbId:int}/stream", async (int tmdbId, string? medi
     catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
 });
 app.MapGet("/api/downloads", (MediaDownloadService downloads) => Results.Json(downloads.GetActiveDownloads()));
-app.MapGet("/api/watch-progress", async (WatchProgressStore progress, CancellationToken ct) => Results.Json(await progress.GetAllAsync(ct)));
+app.MapGet("/api/watch-progress", async (WatchProgressStore progress, MediaDownloadService downloads,
+    CachedMediaAssociationStore associationStore, CancellationToken ct) =>
+{
+    var associations = await associationStore.GetLibraryAssociationsAsync(downloads.GetCompletedMediaFiles(), ct);
+    await progress.ReconcileLibraryProgressAsync(associations, ct);
+    return Results.Json(await progress.GetAllAsync(ct));
+});
 app.MapPost("/api/watch-progress", async (PlaybackProgressRequest input, WatchProgressStore progress, CancellationToken ct) =>
 {
-    if (!string.IsNullOrWhiteSpace(input.LibraryPath))
-        await progress.SaveLibraryAsync(input.LibraryPath, input.Title, input.CurrentTimeSeconds, input.DurationSeconds, ct);
-    else
-        await progress.SaveAsync(input.TmdbId, input.MediaType ?? "movie", input.Title, input.CurrentTimeSeconds,
-            input.DurationSeconds, input.PosterUrl, input.SeasonNumber, input.EpisodeNumber, ct);
+    if (input.TmdbId <= 0 || input.MediaType is not ("movie" or "tv") || string.IsNullOrWhiteSpace(input.Title)) return Results.BadRequest();
+    await progress.SaveAsync(input.TmdbId, input.MediaType, input.Title, input.CurrentTimeSeconds,
+        input.DurationSeconds, input.PosterUrl, input.SeasonNumber, input.EpisodeNumber, ct, input.LibraryPath);
     return Results.NoContent();
 });
 app.MapGet("/api/watchlist", async (MediaWatchlistStore store, CancellationToken ct) => Results.Json(await store.GetAllAsync(ct)));
@@ -525,18 +584,12 @@ app.MapPost("/api/downloads", async (MediaDownloadRequest input, TorrentCatalogS
 });
 
 // La bibliothèque est un dossier local de médias que l’utilisateur est autorisé à lire.
-app.MapGet("/api/library", (IConfiguration config, MediaDownloadService downloads) =>
+app.MapGet("/api/library", async (MediaDownloadService downloads, CachedMediaAssociationStore associationStore, CancellationToken ct) =>
 {
-    var root = config["Media:Root"] ?? Environment.GetEnvironmentVariable("MEDIA_ROOT");
-    var allowed = new[] { ".mp4", ".mkv", ".webm", ".m4v" };
-    var files = new List<LibraryItem>();
-    if (!string.IsNullOrWhiteSpace(root) && Directory.Exists(root))
-        files.AddRange(Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .Where(f => allowed.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
-            .Select(f => new LibraryItem(Path.GetFileNameWithoutExtension(f), Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(Path.GetRelativePath(root, f))).TrimEnd('=').Replace('+', '-').Replace('/', '_'))));
-    files.AddRange(downloads.GetCompletedMediaFiles().Select(file => new LibraryItem(
-        string.Equals(file.MediaType, "tv", StringComparison.OrdinalIgnoreCase) ? Path.GetFileNameWithoutExtension(file.FullPath) : file.Name,
-        "cache." + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(Path.GetFullPath(file.FullPath))).TrimEnd('=').Replace('+', '-').Replace('/', '_'))));
+    var associations = await associationStore.GetLibraryAssociationsAsync(downloads.GetCompletedMediaFiles(), ct);
+    var files = associations.Select(item => new LibraryItem(item.Name,
+        "cache." + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(item.Path)).TrimEnd('=').Replace('+', '-').Replace('/', '_'),
+        item.TmdbId, item.MediaType, item.SeasonNumber, item.EpisodeNumber)).ToArray();
     return Results.Json(new { items = files });
 });
 app.MapGet("/api/library/play/{path}", async (string path, IConfiguration config, MediaDownloadService downloads, CancellationToken ct) =>
@@ -631,9 +684,9 @@ record TorrentCatalogInput(string Name, string Url, string ApiKey, bool RightsCo
 record TrackerInput(List<string> Urls);
 record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
 record ApiCredentialsInput(string? TmdbReadAccessToken, string? OpenSubtitlesApiKey);
-record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit, int? PreferredResolution, bool? EnableUpnp = null);
+record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit, int? PreferredResolution, bool? EnableUpnp = null, string? SubtitleLanguage = null);
 public record TorrentCatalogSource(Guid Id, string Name, string Url, string ApiKey, bool RightsConfirmed, DateTimeOffset AddedAt);
-record LibraryItem(string Name, string Path);
+record LibraryItem(string Name, string Path, int TmdbId, string MediaType, int? SeasonNumber, int? EpisodeNumber, string? PosterUrl = null);
 record PlaybackProgressRequest(int TmdbId, string? MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds,
     string? PosterUrl = null, int? SeasonNumber = null, int? EpisodeNumber = null, string? LibraryPath = null);
 

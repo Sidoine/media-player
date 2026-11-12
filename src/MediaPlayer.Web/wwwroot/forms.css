@@ -1,0 +1,63 @@
+.form-control {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-direction: column;
+    gap: 7px;
+    color: #aeb0b8;
+    font-size: 11px;
+}
+
+.form-control-input-only { display: contents; }
+.form-control-label { display: block; }
+
+input.form-control-input,
+textarea.form-control-input,
+select.form-control-select {
+    width: 100%;
+    min-width: 0;
+    height: 42px;
+    border: 1px solid #303139;
+    border-radius: 5px;
+    padding: 0 11px;
+    background: #090a0e;
+    color: #f4f4f6;
+    font: inherit;
+    outline: none;
+}
+
+textarea.form-control-input {
+    height: auto;
+    min-height: 96px;
+    resize: vertical;
+    padding: 11px;
+    font: 12px/1.65 ui-monospace, Consolas, monospace;
+}
+
+input.form-control-input:focus,
+textarea.form-control-input:focus,
+select.form-control-select:focus {
+    border-color: #858791;
+}
+
+label.form-checkbox {
+    display: flex;
+    width: fit-content;
+    min-width: 0;
+    align-items: center;
+    gap: 9px;
+    color: #aeb0b8;
+    font-size: 11px;
+    cursor: pointer;
+}
+
+label.form-checkbox .form-checkbox-input {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+    margin: 0;
+    accent-color: #e50914;
+}
+
+.form-checkbox-label { line-height: 1.45; }
+label.form-checkbox:has(:disabled) { opacity: .65; cursor: not-allowed; }

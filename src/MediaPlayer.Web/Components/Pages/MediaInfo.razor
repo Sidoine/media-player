@@ -2,15 +2,15 @@
 @inject HttpClient Http
 @inject NavigationManager Navigation
 
-<PageTitle>@(Details?.Title ?? "Informations") · Écran</PageTitle>
+<PageTitle>@(Details?.Title ?? L["Nav_MoreInfo"]) · Bobine</PageTitle>
 
 @if (IsLoading)
 {
-    <section class="media-info-loading"><span class="spinner"></span><span>Chargement des informations…</span></section>
+    <section class="media-info-loading"><span class="spinner"></span><span>@L["Details_Loading"]</span></section>
 }
 else if (!string.IsNullOrWhiteSpace(ErrorMessage))
 {
-    <section class="media-info-error"><h1>Informations indisponibles</h1><p>@ErrorMessage</p><AppButton Variant="light" Href="@CatalogUrl">← Retour au catalogue</AppButton></section>
+    <section class="media-info-error"><h1>@L["Details_Unavailable"]</h1><p>@ErrorMessage</p><AppButton Variant="light" Href="@CatalogUrl">@L["Details_BackCatalog"]</AppButton></section>
 }
 else if (Details is not null)
 {
@@ -18,14 +18,14 @@ else if (Details is not null)
         <section class="media-info-hero" style="@BackdropStyle">
             <div class="media-info-shade"></div>
             <div class="media-info-copy">
-                <a class="media-info-back" href="@CatalogUrl">← Retour à @(MediaType == "tv" ? "Séries" : "Films")</a>
-                <div class="eyebrow">@(MediaType == "tv" ? "SÉRIE" : "FILM") · TMDB</div>
+                <a class="media-info-back" href="@CatalogUrl">@(MediaType == "tv" ? L["Back_Series"] : L["Back_Movies"])</a>
+                <div class="eyebrow">@L[MediaType == "tv" ? "Details_Series" : "Details_Movie"]</div>
                 <h1>@Details.Title</h1>
                 <div class="media-info-facts">
                     @if (Details.Year is not null) { <span>@Details.Year</span> }
                     @if (Details.Rating > 0) { <span>★ @Details.Rating.ToString("0.0") / 10</span> }
                     @if (Details.RuntimeMinutes is not null) { <span>@FormatRuntime(Details.RuntimeMinutes.Value)</span> }
-                    @if (Details.SeasonCount is not null) { <span>@Details.SeasonCount saison(s) · @Details.EpisodeCount épisode(s)</span> }
+                    @if (Details.SeasonCount is not null) { <span>@string.Format(L["Details_SeasonEpisodes"], Details.SeasonCount, Details.EpisodeCount)</span> }
                 </div>
                 @if (Details.Genres.Count > 0)
                 {
@@ -33,17 +33,17 @@ else if (Details is not null)
                 }
                 @if (MediaType == "tv" && Details.Creators is { Count: > 0 })
                 {
-                    <div class="media-info-credits"><span><strong>Créée par</strong> @string.Join(" · ", Details.Creators)</span></div>
+                    <div class="media-info-credits"><span><strong>@L["Details_CreatedBy"]</strong> @string.Join(" · ", Details.Creators)</span></div>
                 }
                 else if (Details.Directors is { Count: > 0 })
                 {
-                    <div class="media-info-credits"><span><strong>Réalisation</strong> @string.Join(" · ", Details.Directors)</span></div>
+                    <div class="media-info-credits"><span><strong>@L["Details_Direction"]</strong> @string.Join(" · ", Details.Directors)</span></div>
                 }
                 @if (Details.Cast is { Count: > 0 })
                 {
-                    <div class="media-info-credits"><span><strong>Avec</strong> @string.Join(" · ", Details.Cast)</span></div>
+                    <div class="media-info-credits"><span><strong>@L["Details_With"]</strong> @string.Join(" · ", Details.Cast)</span></div>
                 }
-                <p class="media-info-overview">@(string.IsNullOrWhiteSpace(Details.Overview) ? "Aucun synopsis n’est disponible." : Details.Overview)</p>
+                <p class="media-info-overview">@(string.IsNullOrWhiteSpace(Details.Overview) ? L["Details_NoOverview"] : Details.Overview)</p>
                 <div class="media-info-actions">
                     @if (MediaType == "tv")
                     {
@@ -51,11 +51,11 @@ else if (Details is not null)
                     }
                     else
                     {
-                        <AppButton Variant="light" OnClick="PlayAsync">▶ <span>Lecture</span></AppButton>
+                        <AppButton Variant="light" OnClick="PlayAsync">▶ <span>@L["Home_Play"]</span></AppButton>
                     }
                     @if (!string.IsNullOrWhiteSpace(Details.TrailerUrl))
                     {
-                        <AppButton Variant="glass" OnClick="() => ShowTrailer = true">▷ <span>Voir la bande-annonce</span></AppButton>
+                        <AppButton Variant="glass" OnClick="() => ShowTrailer = true">▷ <span>@L["Details_Trailer"]</span></AppButton>
                     }
                 </div>
             </div>
@@ -63,7 +63,7 @@ else if (Details is not null)
         @if (MediaType == "tv")
         {
             <section class="series-episodes section" aria-label="Épisodes de @Details.Title">
-                <div class="section-heading"><div><div class="eyebrow">GUIDE DES ÉPISODES</div><h2>Épisodes</h2></div></div>
+                <div class="section-heading"><div><div class="eyebrow">@L["Details_EpisodeGuide"]</div><h2>@L["Details_Episodes"]</h2></div></div>
                 @if (Details.Seasons.Count > 0)
                 {
                     <div class="season-tabs" role="tablist" aria-label="Saisons">
@@ -84,15 +84,15 @@ else if (Details is not null)
                                         else { <span>S@episode.SeasonNumber.ToString("00") · E@episode.EpisodeNumber.ToString("00")</span> }
                                     </div>
                                     <div class="episode-copy">
-                                        <div class="episode-heading"><strong>@episode.EpisodeNumber.ToString("00") · @episode.Title</strong>@if (progress?.IsCompleted == true) { <span class="episode-watched">Vu</span> }</div>
-                                        <small>Saison @episode.SeasonNumber · Épisode @episode.EpisodeNumber@if (!string.IsNullOrWhiteSpace(episode.AirDate)) { <span> · @FormatAirDate(episode.AirDate)</span> }@if (episode.RuntimeMinutes is not null) { <span> · @FormatRuntime(episode.RuntimeMinutes.Value)</span> }</small>
-                                        <p>@(string.IsNullOrWhiteSpace(episode.Overview) ? "Aucun résumé disponible." : episode.Overview)</p>
+                                        <div class="episode-heading"><strong>@episode.EpisodeNumber.ToString("00") · @episode.Title</strong>@if (progress?.IsCompleted == true) { <span class="episode-watched">@L["Details_Watched"]</span> }</div>
+                                        <small>@string.Format(L["Details_SeasonEpisode"], episode.SeasonNumber, episode.EpisodeNumber)@if (!string.IsNullOrWhiteSpace(episode.AirDate)) { <span> · @FormatAirDate(episode.AirDate)</span> }@if (episode.RuntimeMinutes is not null) { <span> · @FormatRuntime(episode.RuntimeMinutes.Value)</span> }</small>
+                                        <p>@(string.IsNullOrWhiteSpace(episode.Overview) ? L["Details_NoSummary"] : episode.Overview)</p>
                                         @if (progress is { IsCompleted: false })
                                         {
                                             <div class="episode-progress"><span style="width:@($"{progress.ProgressPercent:0.#}%")"></span></div>
-                                            <small>En cours · @progress.ProgressPercent.ToString("0") %</small>
+                                            <small>@L["Details_InProgress"] · @progress.ProgressPercent.ToString("0") %</small>
                                         }
-                                        <AppButton Variant="light" Class="episode-play" OnClick="() => PlayEpisode(episode)">▶ <span>@(progress is { IsCompleted: false } ? "Reprendre l’épisode" : "Lire l’épisode")</span></AppButton>
+                                        <AppButton Variant="light" Class="episode-play" OnClick="() => PlayEpisode(episode)">▶ <span>@L[progress is { IsCompleted: false } ? "Details_ResumeEpisode" : "Details_PlayEpisode"]</span></AppButton>
                                     </div>
                                 </article>
                             }
@@ -100,12 +100,12 @@ else if (Details is not null)
                     }
                     else
                     {
-                        <p class="episode-empty">Les épisodes de cette saison ne sont pas disponibles pour le moment.</p>
+                        <p class="episode-empty">@L["Details_NoEpisodes"]</p>
                     }
                 }
                 else
                 {
-                    <p class="episode-empty">La liste des épisodes n’est pas disponible.</p>
+                    <p class="episode-empty">@L["Details_EpisodesUnavailable"]</p>
                 }
             </section>
         }
@@ -136,8 +136,8 @@ else if (Details is not null)
     private WatchProgressEntry? CurrentEpisodeProgress => EpisodeProgress.Where(item => !item.IsCompleted).OrderByDescending(item => item.UpdatedAt).FirstOrDefault();
     private bool HasEpisodeInProgress => CurrentEpisodeProgress is not null;
     private string PlayButtonLabel => NextEpisodeToPlay is { } episode
-        ? $"{(HasEpisodeInProgress ? "Reprendre" : "Lecture")} · S{episode.SeasonNumber:00}E{episode.EpisodeNumber:00}"
-        : "Série terminée";
+        ? $"{L[HasEpisodeInProgress ? "Details_ResumeEpisode" : "Home_Play"]} · S{episode.SeasonNumber:00}E{episode.EpisodeNumber:00}"
+        : L["Details_SeriesEnded"];
     private EpisodeDetails? NextEpisodeToPlay =>
         (CurrentEpisodeProgress is { } current ? AllEpisodes.FirstOrDefault(episode => episode.SeasonNumber == current.SeasonNumber && episode.EpisodeNumber == current.EpisodeNumber) : null)
         ?? AllEpisodes.FirstOrDefault(episode => episode.SeasonNumber > 0 && !IsWatched(episode));
@@ -213,7 +213,7 @@ else if (Details is not null)
     }
 
     private static string FormatRuntime(int minutes) => minutes >= 60 ? $"{minutes / 60} h {minutes % 60:00}" : $"{minutes} min";
-    private static string FormatAirDate(string date) => DateTime.TryParse(date, out var parsed) ? parsed.ToString("d MMM yyyy", System.Globalization.CultureInfo.GetCultureInfo("fr-FR")) : date;
+    private static string FormatAirDate(string date) => DateTime.TryParse(date, System.Globalization.CultureInfo.InvariantCulture, out var parsed) ? parsed.ToString("d MMM yyyy", System.Globalization.CultureInfo.CurrentCulture) : date;
 
     private sealed record MediaDetails(int Id, string Title, string? Overview, string? Poster, string? Backdrop,
         string MediaType, double Rating, string? OriginalLanguage, int? Year, List<string> Genres,

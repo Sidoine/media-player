@@ -2,20 +2,20 @@
 @implements IDisposable
 @inject HttpClient Http
 @inject NavigationManager Navigation
-<PageTitle>Ma bibliothèque · Écran</PageTitle>
+<PageTitle>@L["Library_Title"] · Bobine</PageTitle>
 
 <div class="settings-page library-page" @onclick="CloseMenu">
-    <a class="back-link" href="/">← Retour à l’accueil</a>
-    <div class="settings-title"><div class="eyebrow">VOTRE COLLECTION</div><h1>Ma bibliothèque</h1><p>Retrouvez et lancez la lecture de vos médias locaux autorisés.</p></div>
+    <a class="back-link" href="/">@L["Library_BackHome"]</a>
+    <div class="settings-title"><div class="eyebrow">@L["Library_Collection"]</div><h1>@L["Library_Title"]</h1><p>@L["Library_LocalDescription"]</p></div>
 
-    <PanelCard Class="active-downloads-panel" Eyebrow="TRANSFERTS BITTORRENT" Title="Téléchargements en cours" HeaderActionLabel="Actualiser ↻" OnHeaderAction="LoadDownloadsAsync">
+    <PanelCard Class="active-downloads-panel" Eyebrow="@L["Library_PlayingDownloads"]" Title="@L["Library_Downloads"]" HeaderActionLabel="@L["Library_Refresh"]" OnHeaderAction="LoadDownloadsAsync">
         @if (IsLoadingDownloads)
         {
-            <div class="empty-state compact"><strong>Lecture des téléchargements…</strong></div>
+            <div class="empty-state compact"><strong>@L["Library_ReadDownloads"]</strong></div>
         }
         else if (Downloads.Count == 0)
         {
-            <div class="empty-state compact"><strong>Aucun téléchargement en cours</strong></div>
+            <div class="empty-state compact"><strong>@L["Library_NoActiveDownloads"]</strong></div>
         }
         else
         {
@@ -27,12 +27,12 @@
                         <div class="download-progress"><span style="width:@($"{download.Progress:0.##}%")"></span></div>
                         <small>@download.Progress.ToString("0.0") % · @FormatRate(download.DownloadRate) · @download.AvailablePeers pairs · @download.TrackerCount trackers · DHT @download.DhtState</small>
                         <div class="active-download-actions">
-                            @if (download.CanStream) { <AppButton Variant="light" Href="@DownloadPlaybackUrl(download)">▶ Lire maintenant</AppButton> }
+                            @if (download.CanStream) { <AppButton Variant="light" Href="@DownloadPlaybackUrl(download)">@L["Library_PlayNow"]</AppButton> }
                             @if (!string.Equals(download.DhtState, "Ready", StringComparison.OrdinalIgnoreCase))
                             {
-                                <button class="text-button" disabled="@(DiagnosingDhtKey == DownloadKey(download))" @onclick="() => DiagnoseDhtAsync(download)">@(DiagnosingDhtKey == DownloadKey(download) ? "Diagnostic…" : DhtDiagnostics.ContainsKey(DownloadKey(download)) ? "Actualiser le diagnostic" : "Diagnostiquer DHT")</button>
+                                <button class="text-button" disabled="@(DiagnosingDhtKey == DownloadKey(download))" @onclick="() => DiagnoseDhtAsync(download)">@(DiagnosingDhtKey == DownloadKey(download) ? L["Library_Diagnosing"] : DhtDiagnostics.ContainsKey(DownloadKey(download)) ? L["Library_RefreshDiagnostic"] : L["Library_DiagnoseDht"])</button>
                             }
-                            <button class="remove-button" disabled="@(CancelingKey == DownloadKey(download))" @onclick="() => CancelDownloadAsync(download)">@(CancelingKey == DownloadKey(download) ? "Annulation…" : "Annuler")</button>
+                            <button class="remove-button" disabled="@(CancelingKey == DownloadKey(download))" @onclick="() => CancelDownloadAsync(download)">@(CancelingKey == DownloadKey(download) ? L["Library_Cancelling"] : L["Library_CancelAction"])</button>
                         </div>
                         @if (DhtDiagnostics.TryGetValue(DownloadKey(download), out var diagnostic))
                         {
@@ -50,10 +50,10 @@
         @if (!string.IsNullOrWhiteSpace(DownloadMessage)) { <div class="inline-message">@DownloadMessage</div> }
     </PanelCard>
 
-    <PanelCard Eyebrow="SURVEILLANCE DES INDEXEURS" Title="À surveiller" HeaderActionLabel="Actualiser ↻" OnHeaderAction="LoadWatchlistAsync">
+    <PanelCard Eyebrow="@L["Library_WatchlistEyebrow"]" Title="@L["Library_WatchlistTitle"]" HeaderActionLabel="@L["Library_Refresh"]" OnHeaderAction="LoadWatchlistAsync">
         @if (Watchlist.Count == 0)
         {
-            <div class="empty-state compact"><strong>Aucun média surveillé</strong><p>Ajoutez un film ou un épisode quand aucune source n’est disponible.</p></div>
+            <div class="empty-state compact"><strong>@L["Library_NoWatchlist"]</strong><p>@L["Library_AddWatchlistHint"]</p></div>
         }
         else
         {
@@ -62,22 +62,22 @@
                 {
                     <div class="active-download-row" @key="item.Key">
                         <div class="active-download-heading"><a href="/infos/@item.MediaType/@item.TmdbId"><strong>@item.Title</strong></a><span>@(item.MediaType == "tv" ? $"S{item.SeasonNumber:00}E{item.EpisodeNumber:00}" : "Film")</span></div>
-                        <small>@(item.LastCheckedAt is null ? "Prochaine vérification en cours" : $"Dernière vérification : {item.LastCheckedAt.Value.ToLocalTime():g}") · Recherche toutes les 8 heures</small>
-                        <div class="active-download-actions"><button class="remove-button" disabled="@(RemovingWatchKey == item.Key)" @onclick="() => RemoveWatchlistItemAsync(item)">@(RemovingWatchKey == item.Key ? "Suppression…" : "Retirer")</button></div>
+                        <small>@(item.LastCheckedAt is null ? L["Library_NextCheck"] : $"{L["Library_LastCheck"]}: {item.LastCheckedAt.Value.ToLocalTime():g}") · @L["Library_CheckEvery8Hours"]</small>
+                        <div class="active-download-actions"><button class="remove-button" disabled="@(RemovingWatchKey == item.Key)" @onclick="() => RemoveWatchlistItemAsync(item)">@(RemovingWatchKey == item.Key ? L["Library_Deleting"] : L["Library_Remove"])</button></div>
                     </div>
                 }
             </div>
         }
     </PanelCard>
 
-    <PanelCard Eyebrow="FICHIERS LOCAUX" Title="Vos médias" HeaderActionLabel="Actualiser ↻" OnHeaderAction="LoadLibraryAsync">
+    <PanelCard Eyebrow="@L["Library_FilesEyebrow"]" Title="@L["Library_MediaTitle"]" HeaderActionLabel="@L["Library_Refresh"]" OnHeaderAction="LoadLibraryAsync">
         @if (IsLoading)
         {
-            <div class="empty-state compact"><strong>Lecture de la bibliothèque…</strong></div>
+            <div class="empty-state compact"><strong>@L["Library_Loading"]</strong></div>
         }
         else if (Files.Count == 0)
         {
-            <div class="empty-state compact"><span class="empty-icon">▣</span><strong>Aucun média trouvé</strong><p>Configurez <code>MEDIA_ROOT</code> pour parcourir vos fichiers vidéo locaux autorisés.</p></div>
+            <div class="empty-state compact"><span class="empty-icon">▣</span><strong>@L["Library_NoMedia"]</strong><p>@L["Library_ConfigureMediaRoot"]</p></div>
         }
         else
         {
@@ -86,14 +86,14 @@
                 {
                     <div class="library-entry" @key="file.Path">
                         <div class="library-item">
-                            <button class="library-item-play" @onclick="() => Play(file)" aria-label="Lire @DisplayMediaName(file.Name)"><span class="library-play">▶</span><span>@DisplayMediaName(file.Name)</span></button>
+                            <button class="library-item-play" @onclick="() => Play(file)" aria-label="@($"{L["Library_Play"]} {DisplayMediaName(file.Name)}")"><span class="library-play">▶</span><span>@DisplayMediaName(file.Name)</span></button>
                             <div class="library-menu" @onclick:stopPropagation="true">
-                                <button class="library-menu-toggle" aria-label="Actions pour @file.Name" aria-expanded="@(OpenMenuPath == file.Path)" title="Actions" @onclick="() => ToggleMenu(file.Path)">⋮</button>
+                                <button class="library-menu-toggle" aria-label="@($"{L["Library_Actions"]}: {file.Name}")" aria-expanded="@(OpenMenuPath == file.Path)" title="@L["Library_Actions"]" @onclick="() => ToggleMenu(file.Path)">⋮</button>
                                 @if (OpenMenuPath == file.Path)
                                 {
                                 <div class="library-menu-options">
-                                    <button @onclick="() => ShowPropertiesAsync(file)">Propriétés</button>
-                                    <button class="danger" @onclick="() => RequestDelete(file)">Supprimer le fichier…</button>
+                                    <button @onclick="() => ShowPropertiesAsync(file)">@L["Library_Properties"]</button>
+                                    <button class="danger" @onclick="() => RequestDelete(file)">@L["Library_DeleteFile"]</button>
                                 </div>
                                 }
                             </div>
@@ -108,26 +108,26 @@
     {
         <AppModal IsOpen="true" PanelClass="library-properties-dialog" PanelStyle="--app-modal-width:620px;--app-modal-padding:25px;--app-modal-background:#17181e;--app-modal-border:1px solid #34353d;--app-modal-radius:8px;--app-modal-shadow:0 20px 70px #000a" AriaLabelledBy="properties-title" ShowCloseButton="true" DismissOnBackdrop="false" OnClose="CloseProperties">
                 <header class="library-properties-heading">
-                    <h2 id="properties-title">Propriétés</h2>
+                    <h2 id="properties-title">@L["Library_Properties"]</h2>
                 </header>
                 @if (IsLoadingProperties)
                 {
-                    <div class="empty-state compact"><strong>Lecture des propriétés…</strong></div>
+                    <div class="empty-state compact"><strong>@L["Library_LoadingProperties"]</strong></div>
                 }
                 else if (Properties is not null)
                 {
                     <dl class="media-properties-list">
-                        <div><dt>Nom du fichier</dt><dd>@Properties.FileName</dd></div>
-                        <div><dt>Taille</dt><dd>@FormatSize(Properties.SizeBytes)</dd></div>
-                        <div><dt>Durée</dt><dd>@(Properties.Duration ?? "Non disponible")</dd></div>
-                        <div><dt>Résolution</dt><dd>@(Properties.Resolution ?? "Non disponible")</dd></div>
-                        <div><dt>Pistes audio</dt><dd>@(Properties.AudioTracks.Count == 0 ? "Aucune piste détectée" : string.Join(" · ", Properties.AudioTracks.Where(track => !string.IsNullOrWhiteSpace(track))))</dd></div>
-                        <div><dt>Sous-titres</dt><dd>@(Properties.SubtitleTracks.Count == 0 ? "Aucune piste détectée" : string.Join(" · ", Properties.SubtitleTracks))</dd></div>
+                        <div><dt>@L["Library_FileName"]</dt><dd>@Properties.FileName</dd></div>
+                        <div><dt>@L["Library_Size"]</dt><dd>@FormatSize(Properties.SizeBytes)</dd></div>
+                        <div><dt>@L["Library_Duration"]</dt><dd>@(Properties.Duration ?? L["Library_UnavailableValue"])</dd></div>
+                        <div><dt>@L["Library_Resolution"]</dt><dd>@(Properties.Resolution ?? L["Library_UnavailableValue"])</dd></div>
+                        <div><dt>@L["Library_AudioTracks"]</dt><dd>@(Properties.AudioTracks.Count == 0 ? L["Library_NoTracks"] : string.Join(" · ", Properties.AudioTracks.Where(track => !string.IsNullOrWhiteSpace(track))))</dd></div>
+                        <div><dt>@L["Library_Subtitles"]</dt><dd>@(Properties.SubtitleTracks.Count == 0 ? L["Library_NoTracks"] : string.Join(" · ", Properties.SubtitleTracks))</dd></div>
                     </dl>
                 }
                 else
                 {
-                    <div class="inline-message error">@(PropertiesError ?? "Les propriétés du fichier sont indisponibles.")</div>
+                    <div class="inline-message error">@(PropertiesError ?? L["Library_PropertiesUnavailable"])</div>
                 }
         </AppModal>
     }
@@ -135,12 +135,12 @@
     @if (PendingDelete is not null)
     {
         <AppModal IsOpen="true" Role="alertdialog" PanelClass="library-delete-dialog" PanelStyle="--app-modal-width:430px;--app-modal-padding:24px;--app-modal-background:#17181e;--app-modal-border:1px solid #34353d;--app-modal-radius:8px;--app-modal-shadow:0 20px 70px #000a" AriaLabelledBy="delete-title" DismissOnBackdrop="false">
-                <h2 id="delete-title">Supprimer ce fichier ?</h2>
+                <h2 id="delete-title">@L["Library_DeleteConfirm"]</h2>
                 <p>@PendingDelete.Name</p>
                 @if (!string.IsNullOrWhiteSpace(DeleteMessage)) { <div class="inline-message error">@DeleteMessage</div> }
                 <div class="library-delete-actions">
-                    <AppButton Variant="glass" Class="compact" OnClick="CancelDelete" Disabled="@IsDeleting">Annuler</AppButton>
-                    <AppButton Variant="red" Class="compact" OnClick="DeleteFileAsync" Disabled="@IsDeleting">@(IsDeleting ? "Suppression…" : "Supprimer")</AppButton>
+                    <AppButton Variant="glass" Class="compact" OnClick="CancelDelete" Disabled="@IsDeleting">@L["Library_Cancel"]</AppButton>
+                    <AppButton Variant="red" Class="compact" OnClick="DeleteFileAsync" Disabled="@IsDeleting">@(IsDeleting ? L["Library_Deleting"] : L["Library_Delete"])</AppButton>
                 </div>
         </AppModal>
     }

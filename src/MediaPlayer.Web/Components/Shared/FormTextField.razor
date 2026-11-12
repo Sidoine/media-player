@@ -1,0 +1,53 @@
+@typeparam TValue
+
+<label class="form-control @Class @(InputOnly ? "form-control-input-only" : null)" for="@Id">
+    @if (!InputOnly && !string.IsNullOrWhiteSpace(Label))
+    {
+        <span class="form-control-label">@Label</span>
+    }
+    @if (Multiline)
+    {
+        <textarea id="@Id" class="form-control-input @InputClass" value="@FormattedValue" @onchange="HandleChanged" placeholder="@Placeholder" rows="@Rows" disabled="@Disabled" required="@Required" aria-label="@AriaLabel" @attributes="AdditionalAttributes"></textarea>
+    }
+    else if (UpdateOnInput)
+    {
+        <input id="@Id" class="form-control-input @InputClass" type="@Type" value="@FormattedValue" @oninput="HandleChanged" placeholder="@Placeholder" autocomplete="@AutoComplete" min="@Min" max="@Max" step="@Step" maxlength="@MaxLength" disabled="@Disabled" required="@Required" aria-label="@AriaLabel" @attributes="AdditionalAttributes" />
+    }
+    else
+    {
+        <input id="@Id" class="form-control-input @InputClass" type="@Type" value="@FormattedValue" @onchange="HandleChanged" placeholder="@Placeholder" autocomplete="@AutoComplete" min="@Min" max="@Max" step="@Step" maxlength="@MaxLength" disabled="@Disabled" required="@Required" aria-label="@AriaLabel" @attributes="AdditionalAttributes" />
+    }
+</label>
+
+@code {
+    [Parameter] public TValue Value { get; set; } = default!;
+    [Parameter] public EventCallback<TValue> ValueChanged { get; set; }
+    [Parameter] public string? Label { get; set; }
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public string? AriaLabel { get; set; }
+    [Parameter] public string? Placeholder { get; set; }
+    [Parameter] public string Type { get; set; } = "text";
+    [Parameter] public string? AutoComplete { get; set; }
+    [Parameter] public string? Min { get; set; }
+    [Parameter] public string? Max { get; set; }
+    [Parameter] public string? Step { get; set; }
+    [Parameter] public int? MaxLength { get; set; }
+    [Parameter] public int Rows { get; set; } = 4;
+    [Parameter] public bool Required { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public bool Multiline { get; set; }
+    [Parameter] public bool UpdateOnInput { get; set; }
+    [Parameter] public bool InputOnly { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? InputClass { get; set; }
+    [Parameter(CaptureUnmatchedValues = true)] public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    private CultureInfo ValueCulture => Type == "number" ? CultureInfo.InvariantCulture : CultureInfo.CurrentCulture;
+    private string? FormattedValue => Convert.ToString(Value, ValueCulture);
+
+    private async Task HandleChanged(ChangeEventArgs args)
+    {
+        if (BindConverter.TryConvertTo<TValue>(args.Value, ValueCulture, out var converted))
+            await ValueChanged.InvokeAsync(converted);
+    }
+}

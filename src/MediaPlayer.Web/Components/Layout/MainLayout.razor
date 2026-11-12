@@ -1,16 +1,16 @@
 @inherits LayoutComponentBase
 <div class="shell">
     <header class="topbar">
-        <a class="wordmark" href="/" aria-label="Écran, accueil">ÉCRAN</a>
-        <nav aria-label="Navigation principale">
-            <NavLink href="/" Match="NavLinkMatch.All">Accueil</NavLink>
-            <NavLink href="/films">Films</NavLink>
-            <NavLink href="/series">Séries</NavLink>
-            <a href="/bibliotheque">Ma bibliothèque</a>
+        <a class="wordmark" href="/" aria-label="Bobine, @L["Nav_Home"]">BOBINE</a>
+        <nav aria-label="@L["Nav_Home"]">
+            <NavLink href="/" Match="NavLinkMatch.All">@L["Nav_Home"]</NavLink>
+            <NavLink href="/films">@L["Nav_Movies"]</NavLink>
+            <NavLink href="/series">@L["Nav_Series"]</NavLink>
+            <a href="/bibliotheque">@L["Nav_Library"]</a>
         </nav>
         <CatalogSearch />
-        <AppButton Variant="light" Class="profile" Href="/configuration" Title="Configuration" AriaLabel="Configuration">⚙</AppButton>
+        <AppButton Variant="light" Class="profile" Href="/configuration" Title="@L["Nav_Settings"]" AriaLabel="@L["Nav_Settings"]">⚙</AppButton>
     </header>
     <main>@Body</main>
-    <footer>ÉCRAN <span>Les métadonnées et affiches proviennent de TMDB. ÉCRAN n’est ni approuvé ni certifié par TMDB.</span></footer>
+    <footer>ÉCRAN <span>@L["Footer_TmdbDisclaimer"]</span></footer>
 </div>

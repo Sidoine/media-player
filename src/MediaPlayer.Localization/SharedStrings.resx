@@ -1,0 +1,251 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value></resheader>
+  <data name="Nav_Home" xml:space="preserve"><value>Home</value></data>
+  <data name="Nav_Movies" xml:space="preserve"><value>Movies</value></data>
+  <data name="Nav_Series" xml:space="preserve"><value>Series</value></data>
+  <data name="Nav_Library" xml:space="preserve"><value>My library</value></data>
+  <data name="Nav_Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Home_Featured" xml:space="preserve"><value>FEATURED</value></data>
+  <data name="Home_FeaturedMovie" xml:space="preserve"><value>FEATURED · MOVIE</value></data>
+  <data name="Home_FeaturedSeries" xml:space="preserve"><value>FEATURED · SERIES</value></data>
+  <data name="Home_Tagline" xml:space="preserve"><value>Your stories, on the big screen.</value></data>
+  <data name="Home_Intro" xml:space="preserve"><value>Discover movies and series, then play them from your personal library.</value></data>
+  <data name="Home_Play" xml:space="preserve"><value>Play</value></data>
+  <data name="Home_MoreInfo" xml:space="preserve"><value>More info</value></data>
+  <data name="Home_ContinueWatching" xml:space="preserve"><value>Continue watching</value></data>
+  <data name="Home_Trending" xml:space="preserve"><value>Trending now</value></data>
+  <data name="Home_TrendingMovies" xml:space="preserve"><value>Trending movies</value></data>
+  <data name="Home_TrendingSeries" xml:space="preserve"><value>Trending series</value></data>
+  <data name="Home_Popular" xml:space="preserve"><value>Popular picks</value></data>
+  <data name="Home_Loading" xml:space="preserve"><value>Loading the catalog…</value></data>
+  <data name="Home_Empty" xml:space="preserve"><value>No results yet.</value></data>
+  <data name="Library_Title" xml:space="preserve"><value>My library</value></data>
+  <data name="Library_Description" xml:space="preserve"><value>Your media and the movies you want to watch.</value></data>
+  <data name="Library_Empty" xml:space="preserve"><value>No media or watchlist items yet.</value></data>
+  <data name="Library_Unavailable" xml:space="preserve"><value>Library unavailable: {0}</value></data>
+  <data name="Library_InLibrary" xml:space="preserve"><value>In your library</value></data>
+  <data name="Library_Resume" xml:space="preserve"><value>Resume</value></data>
+  <data name="Details_Loading" xml:space="preserve"><value>Loading details…</value></data>
+  <data name="Details_NoOverview" xml:space="preserve"><value>No overview is available.</value></data>
+  <data name="Details_Movie" xml:space="preserve"><value>MOVIE · TMDB</value></data>
+  <data name="Details_Series" xml:space="preserve"><value>SERIES · TMDB</value></data>
+  <data name="Details_Play" xml:space="preserve"><value>▶  Play</value></data>
+  <data name="Settings_Title" xml:space="preserve"><value>Settings</value></data>
+  <data name="Settings_Language" xml:space="preserve"><value>Language</value></data>
+  <data name="Settings_LanguageDescription" xml:space="preserve"><value>Choose the language used by this browser. Automatic follows your browser language.</value></data>
+  <data name="Settings_Automatic" xml:space="preserve"><value>Automatic (browser language)</value></data>
+  <data name="Language_French" xml:space="preserve"><value>Français</value></data>
+  <data name="Language_English" xml:space="preserve"><value>English</value></data>
+  <data name="Settings_SaveLanguage" xml:space="preserve"><value>Language preference saved.</value></data>
+  <data name="Back_Catalog" xml:space="preserve"><value>← Back to catalog</value></data>
+  <data name="Back_Home" xml:space="preserve"><value>← Back to home</value></data>
+  <data name="Back_Movies" xml:space="preserve"><value>← Back to movies</value></data>
+  <data name="Back_Series" xml:space="preserve"><value>← Back to series</value></data>
+  <data name="Playback_Pause" xml:space="preserve"><value>Ⅱ  Pause</value></data>
+  <data name="Playback_Resume" xml:space="preserve"><value>▶  Resume</value></data>
+  <data name="Playback_Rewind10" xml:space="preserve"><value>↶  10 sec</value></data>
+  <data name="Playback_Forward10" xml:space="preserve"><value>10 sec  ↷</value></data>
+  <data name="Playback_BackToDetails" xml:space="preserve"><value>‹  Back to details</value></data>
+  <data name="Playback_BackToLibrary" xml:space="preserve"><value>‹  Back to library</value></data>
+  <data name="Playback_ErrorTitle" xml:space="preserve"><value>Playback failed</value></data>
+  <data name="Playback_ErrorMessage" xml:space="preserve"><value>The native player could not decode this file. Its container or audio/video codec may not be supported by this device.</value></data>
+  <data name="Watch_NoSubtitleForLanguage"><value>No {0} subtitles were found.</value></data>
+  <data name="Watch_SubtitleSearchUnavailable"><value>Subtitle search is unavailable.</value></data>
+  <data name="Settings_ServerAddress" xml:space="preserve"><value>Server address</value></data>
+  <data name="Settings_ServerDescription" xml:space="preserve"><value>Enter the address of your Bobine server on your local network.</value></data>
+  <data name="Settings_SearchingNetwork" xml:space="preserve"><value>Searching the local network…</value></data>
+  <data name="Settings_NoServer" xml:space="preserve"><value>No Bobine server found on this network.</value></data>
+  <data name="Settings_Connecting" xml:space="preserve"><value>Connecting to server…</value></data>
+  <data name="Settings_ServerUnavailable" xml:space="preserve"><value>Server unavailable. Check the address and network.</value></data>
+  <data name="Details_LoadingError" xml:space="preserve"><value>Could not load details: {0}</value></data>
+  <data name="Details_Unavailable" xml:space="preserve"><value>Details unavailable</value></data>
+  <data name="Category_Movie" xml:space="preserve"><value>Movie</value></data>
+  <data name="Category_Series" xml:space="preserve"><value>Series</value></data>
+  <data name="Library_Collection" xml:space="preserve"><value>YOUR COLLECTION</value></data>
+  <data name="Library_LoadingDownloads" xml:space="preserve"><value>Loading downloads…</value></data>
+  <data name="Library_NoDownloads" xml:space="preserve"><value>No active downloads</value></data>
+  <data name="Library_NoWatchlist" xml:space="preserve"><value>No watchlist items</value></data>
+  <data name="Library_AddWatchlistHint" xml:space="preserve"><value>Add a movie or episode when no source is available.</value></data>
+  <data name="Library_Loading" xml:space="preserve"><value>Loading your library…</value></data>
+  <data name="Library_NoMedia" xml:space="preserve"><value>No media found</value></data>
+  <data name="Library_ConfigureMediaRoot" xml:space="preserve"><value>Set MEDIA_ROOT to browse your authorized local video files.</value></data>
+  <data name="Details_Episodes" xml:space="preserve"><value>Episodes</value></data>
+  <data name="Details_EpisodeGuide" xml:space="preserve"><value>EPISODE GUIDE</value></data>
+  <data name="Details_Watched" xml:space="preserve"><value>Watched</value></data>
+  <data name="Details_InProgress" xml:space="preserve"><value>In progress</value></data>
+  <data name="Details_Season" xml:space="preserve"><value>Season {0}</value></data>
+  <data name="Details_Episode" xml:space="preserve"><value>Episode {0}</value></data>
+  <data name="Home_Show" xml:space="preserve"><value>Show</value></data>
+  <data name="Home_ScrollLeft" xml:space="preserve"><value>Scroll left</value></data>
+  <data name="Home_ScrollRight" xml:space="preserve"><value>Scroll right</value></data>
+  <data name="Home_PickedForYou" xml:space="preserve"><value>PICKED FOR YOU</value></data>
+  <data name="Home_CatalogNotConfigured" xml:space="preserve"><value>TMDB catalog is not configured</value></data>
+  <data name="Home_TrendsSoon" xml:space="preserve"><value>Trending titles will appear shortly.</value></data>
+  <data name="Home_AddTmdbToken" xml:space="preserve"><value>Add your TMDB token in development secrets to show movies and series.</value></data>
+  <data name="Home_MoviesAndSeries" xml:space="preserve"><value>Movies and series</value></data>
+  <data name="Home_SearchResults" xml:space="preserve"><value>Search results</value></data>
+  <data name="Home_StatusSelected" xml:space="preserve"><value>The best of what's trending, picked for you</value></data>
+  <data name="Home_StatusPersonal" xml:space="preserve"><value>Your personal cinema space</value></data>
+  <data name="Library_BackHome" xml:space="preserve"><value>← Back to home</value></data>
+  <data name="Library_LocalDescription" xml:space="preserve"><value>Find and play your authorized local media.</value></data>
+  <data name="Library_Downloads" xml:space="preserve"><value>Active downloads</value></data>
+  <data name="Library_Refresh" xml:space="preserve"><value>Refresh ↻</value></data>
+  <data name="Library_ReadDownloads" xml:space="preserve"><value>Loading downloads…</value></data>
+  <data name="Library_NoActiveDownloads" xml:space="preserve"><value>No active downloads</value></data>
+  <data name="Library_Properties" xml:space="preserve"><value>Properties</value></data>
+  <data name="Library_FileName" xml:space="preserve"><value>File name</value></data>
+  <data name="Library_Size" xml:space="preserve"><value>Size</value></data>
+  <data name="Library_Duration" xml:space="preserve"><value>Duration</value></data>
+  <data name="Library_Resolution" xml:space="preserve"><value>Resolution</value></data>
+  <data name="Library_AudioTracks" xml:space="preserve"><value>Audio tracks</value></data>
+  <data name="Library_Subtitles" xml:space="preserve"><value>Subtitles</value></data>
+  <data name="Library_UnavailableValue" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="Library_NoTracks" xml:space="preserve"><value>No tracks detected</value></data>
+  <data name="Library_DeleteConfirm" xml:space="preserve"><value>Delete this file?</value></data>
+  <data name="Library_Delete" xml:space="preserve"><value>Delete</value></data>
+  <data name="Library_DeleteFile" xml:space="preserve"><value>Delete file…</value></data>
+  <data name="Library_Cancel" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Details_BackCatalog" xml:space="preserve"><value>← Back to catalog</value></data>
+  <data name="Details_CreatedBy" xml:space="preserve"><value>Created by</value></data>
+  <data name="Details_Direction" xml:space="preserve"><value>Directed by</value></data>
+  <data name="Details_With" xml:space="preserve"><value>Cast</value></data>
+  <data name="Details_Trailer" xml:space="preserve"><value>Watch trailer</value></data>
+  <data name="Details_SeasonEpisodes" xml:space="preserve"><value>{0} season(s) · {1} episode(s)</value></data>
+  <data name="Details_SeasonEpisode" xml:space="preserve"><value>Season {0} · Episode {1}</value></data>
+  <data name="Details_ResumeEpisode" xml:space="preserve"><value>Resume episode</value></data>
+  <data name="Details_PlayEpisode" xml:space="preserve"><value>Play episode</value></data>
+  <data name="Details_NoEpisodes" xml:space="preserve"><value>Episodes for this season are not available right now.</value></data>
+  <data name="Details_EpisodesUnavailable" xml:space="preserve"><value>The episode list is unavailable.</value></data>
+  <data name="Details_NoSummary" xml:space="preserve"><value>No summary is available.</value></data>
+  <data name="Settings_Preferences" xml:space="preserve"><value>PREFERENCES</value></data>
+  <data name="Settings_ManageSources" xml:space="preserve"><value>Manage search sources for your cinema space.</value></data>
+  <data name="Settings_Sections" xml:space="preserve"><value>Settings sections</value></data>
+  <data name="Settings_Dashboard" xml:space="preserve"><value>Dashboard</value></data>
+  <data name="Settings_Storage" xml:space="preserve"><value>Media storage</value></data>
+  <data name="Settings_Resolution" xml:space="preserve"><value>Preferred resolution</value></data>
+  <data name="Settings_PlaybackPreferences"><value>Video playback preferences</value></data>
+  <data name="Settings_Sharing" xml:space="preserve"><value>BitTorrent sharing</value></data>
+  <data name="Settings_ApiKeys" xml:space="preserve"><value>API keys</value></data>
+  <data name="Settings_Indexers" xml:space="preserve"><value>Indexers</value></data>
+  <data name="Settings_Trackers" xml:space="preserve"><value>BitTorrent trackers</value></data>
+  <data name="Settings_Definitions" xml:space="preserve"><value>Indexer definitions</value></data>
+  <data name="Settings_SyncStatus" xml:space="preserve"><value>SYNC AND STATUS</value></data>
+  <data name="Home_PersonalCinema" xml:space="preserve"><value>YOUR CINEMA, AT HOME</value></data>
+  <data name="Nav_MoreInfo" xml:space="preserve"><value>Information</value></data>
+  <data name="Library_LoadingProperties" xml:space="preserve"><value>Loading file properties…</value></data>
+  <data name="Library_Deleting" xml:space="preserve"><value>Deleting…</value></data>
+  <data name="Settings_ServersFound" xml:space="preserve"><value>{0} server(s) found:</value></data>
+  <data name="Settings_ConfigureServer" xml:space="preserve"><value>Configure server address</value></data>
+  <data name="Settings_DiscoverServers" xml:space="preserve"><value>Find servers on the network</value></data>
+  <data name="Common_Retry" xml:space="preserve"><value>Retry</value></data>
+  <data name="Common_Close" xml:space="preserve"><value>Close</value></data>
+  <data name="Common_NotFoundTitle" xml:space="preserve"><value>This page could not be found</value></data>
+  <data name="Common_BackHome" xml:space="preserve"><value>Back to home</value></data>
+  <data name="Common_ApiConfigurationRequired" xml:space="preserve"><value>API key configuration required…</value></data>
+  <data name="Footer_TmdbDisclaimer" xml:space="preserve"><value>Metadata and posters are provided by TMDB. ÉCRAN is not endorsed or certified by TMDB.</value></data>
+  <data name="Home_WatchingEyebrow" xml:space="preserve"><value>CONTINUE WATCHING</value></data>
+  <data name="Home_CacheTitle" xml:space="preserve"><value>Ready to watch</value></data>
+  <data name="Home_WatchlistTitle" xml:space="preserve"><value>Watchlist</value></data>
+  <data name="Home_IndexerPicks" xml:space="preserve"><value>Popular on your indexers</value></data>
+  <data name="Library_WatchlistTitle" xml:space="preserve"><value>Watchlist</value></data>
+  <data name="Library_MediaTitle" xml:space="preserve"><value>Your media</value></data>
+  <data name="Library_WatchlistEyebrow" xml:space="preserve"><value>INDEXER WATCHLIST</value></data>
+  <data name="Library_FilesEyebrow" xml:space="preserve"><value>LOCAL FILES</value></data>
+  <data name="Library_PlayNow" xml:space="preserve"><value>▶ Play now</value></data>
+  <data name="Library_CancelAction" xml:space="preserve"><value>Cancel</value></data>
+  <data name="Library_Remove" xml:space="preserve"><value>Remove</value></data>
+  <data name="Library_Play" xml:space="preserve"><value>Play</value></data>
+  <data name="Library_Actions" xml:space="preserve"><value>Actions</value></data>
+  <data name="Library_DeleteError" xml:space="preserve"><value>Could not delete file.</value></data>
+  <data name="Library_PropertiesUnavailable" xml:space="preserve"><value>File properties are unavailable.</value></data>
+  <data name="Server_CatalogNotConfigured" xml:space="preserve"><value>TMDB catalog is not configured on the server.</value></data>
+  <data name="Server_NotFoundSearching" xml:space="preserve"><value>Server not found. Searching the local network…</value></data>
+  <data name="Server_CannotReach" xml:space="preserve"><value>Could not reach the server. Check its address in settings.</value></data>
+  <data name="Server_NoServers" xml:space="preserve"><value>No Bobine server found. Make sure the server and TV are on the same network.</value></data>
+  <data name="Server_InvalidAddress" xml:space="preserve"><value>Use the server's network address, for example {0}.</value></data>
+  <data name="Details_NoResponse" xml:space="preserve"><value>The server did not return any details.</value></data>
+  <data name="Details_SeriesEnded" xml:space="preserve"><value>Series finished</value></data>
+  <data name="Settings_ConfiguredTrackers" xml:space="preserve"><value>{0} configured</value></data>
+  <data name="Library_Diagnosing" xml:space="preserve"><value>Diagnosing…</value></data>
+  <data name="Library_RefreshDiagnostic" xml:space="preserve"><value>Refresh diagnostics</value></data>
+  <data name="Library_DiagnoseDht" xml:space="preserve"><value>Diagnose DHT</value></data>
+  <data name="Library_Cancelling" xml:space="preserve"><value>Canceling…</value></data>
+  <data name="Library_NextCheck" xml:space="preserve"><value>Next check is pending</value></data>
+  <data name="Library_LastCheck" xml:space="preserve"><value>Last checked</value></data>
+  <data name="Library_CheckEvery8Hours" xml:space="preserve"><value>Checks every 8 hours</value></data>
+  <data name="Library_PlayingDownloads" xml:space="preserve"><value>BITTORRENT TRANSFERS</value></data>
+  <data name="Settings_StorageDescription" xml:space="preserve"><value>Choose where future downloads are stored and how much space is reserved for media. When the cache is full, least recently watched items are removed first.</value></data>
+  <data name="Settings_StorageFolder" xml:space="preserve"><value>Storage folder</value></data>
+  <data name="Settings_QuotaGb" xml:space="preserve"><value>Quota (GB)</value></data>
+  <data name="Settings_AllowUpnp" xml:space="preserve"><value>Allow UPnP/NAT-PMP to forward BitTorrent ports automatically</value></data>
+  <data name="Settings_UpnpTooltip" xml:space="preserve"><value>Your router must support UPnP or NAT-PMP. Port forwarding is requested when the BitTorrent engine starts.</value></data>
+  <data name="Settings_UpnpInactive" xml:space="preserve"><value>UPnP/NAT-PMP forwarding is inactive in the engine.</value></data>
+  <data name="Settings_BittorrentEngine"><value>BitTorrent engine</value></data>
+  <data name="Settings_EngineRunning"><value>Running</value></data>
+  <data name="Settings_UpnpDisabled"><value>Automatic port forwarding is disabled.</value></data>
+  <data name="Settings_UpnpActive"><value>Automatic port forwarding is active.</value></data>
+  <data name="Settings_UpnpPendingStatus"><value>Looking for a compatible gateway.</value></data>
+  <data name="Settings_UpnpFailedStatus"><value>Automatic port forwarding failed.</value></data>
+  <data name="Settings_UpnpNoMappingsStatus"><value>No port mappings reported.</value></data>
+  <data name="Settings_StorageUsage"><value>{0} GB used of {1} GB</value></data>
+  <data name="Settings_CreatedMappings" xml:space="preserve"><value>Created mappings:</value></data>
+  <data name="Settings_PendingMappings" xml:space="preserve"><value>Pending mappings:</value></data>
+  <data name="Settings_PendingGateway" xml:space="preserve"><value>The engine is looking for a compatible gateway.</value></data>
+  <data name="Settings_FailedMappings" xml:space="preserve"><value>Failed mappings:</value></data>
+  <data name="Settings_RouterNotConfirmed" xml:space="preserve"><value>The router did not confirm their creation.</value></data>
+  <data name="Settings_NoMappings" xml:space="preserve"><value>The engine reported no UPnP/NAT-PMP mappings.</value></data>
+  <data name="Settings_ActiveFolder" xml:space="preserve"><value>active folder:</value></data>
+  <data name="Settings_FolderRestart" xml:space="preserve"><value>The new folder will be used after restart. Existing media remains in its current folder.</value></data>
+  <data name="Settings_UpnpRestart" xml:space="preserve"><value>The UPnP/NAT-PMP change will take effect after the engine restarts.</value></data>
+  <data name="Settings_Restarting" xml:space="preserve"><value>Restarting…</value></data>
+  <data name="Settings_RestartServer" xml:space="preserve"><value>Restart server</value></data>
+  <data name="Settings_ResolutionDescription" xml:space="preserve"><value>This resolution is preferred when it distinguishes a source. If several sources match, the original version is preferred.</value></data>
+  <data name="Settings_SubtitleLanguage"><value>Subtitle language</value></data>
+  <data name="Settings_SubtitleOsLanguage"><value>Server OS language ({0})</value></data>
+  <data name="Settings_SharingDescription" xml:space="preserve"><value>The ratio is uploaded data divided by downloaded data. At 0, sharing stops as soon as the download finishes.</value></data>
+  <data name="Settings_UnlimitedSharing" xml:space="preserve"><value>Share without a limit until the media is deleted</value></data>
+  <data name="Settings_TargetRatio" xml:space="preserve"><value>Target ratio</value></data>
+  <data name="Settings_ApiKeysDescription" xml:space="preserve"><value>Enter your TMDB and OpenSubtitles keys. They are stored locally with protection. .NET secrets and environment variables take precedence.</value></data>
+  <data name="Settings_IndexersDescription" xml:space="preserve"><value>Manage search sources, Cardigann definitions, and indexers built into the app.</value></data>
+  <data name="Settings_TrackersDescription" xml:space="preserve"><value>Add tracker URLs, one per line. They are announced to peers to improve discovery and download recovery.</value></data>
+  <data name="Settings_DefinitionsDescription" xml:space="preserve"><value>Cardigann definitions are stored in App_Data. A recent local copy is kept if the remote repository is unavailable.</value></data>
+  <data name="Settings_ApiSourceInfo" xml:space="preserve"><value>TMDB:</value></data>
+  <data name="Settings_SourceRight" xml:space="preserve"><value>Rights confirmed</value></data>
+  <data name="Settings_Test" xml:space="preserve"><value>Test</value></data>
+  <data name="Settings_RemoveIndexer" xml:space="preserve"><value>Remove indexer</value></data>
+  <data name="Settings_AddTorznab" xml:space="preserve"><value>Add Torznab index ＋</value></data>
+  <data name="Settings_AddCardigann" xml:space="preserve"><value>Add Cardigann index ＋</value></data>
+  <data name="Settings_AddInternal" xml:space="preserve"><value>Add internal index ＋</value></data>
+  <data name="Settings_NoIndexer" xml:space="preserve"><value>No indexer configured</value></data>
+  <data name="Settings_AddCatalogHint" xml:space="preserve"><value>Add a Torznab catalog or a Cardigann indexer.</value></data>
+  <data name="Settings_AddIndexerModal" xml:space="preserve"><value>NEW INDEXER</value></data>
+  <data name="Settings_ConfirmRights" xml:space="preserve"><value>I confirm that I have the rights required for media from this source.</value></data>
+  <data name="Settings_AddIndex" xml:space="preserve"><value>Add index</value></data>
+  <data name="Settings_DefinitionsLoading" xml:space="preserve"><value>Loading cache status…</value></data>
+  <data name="Settings_DefinitionsUnavailable" xml:space="preserve"><value>No local copy is available. The app will try again at the next startup.</value></data>
+  <data name="Settings_RightsNotice" xml:space="preserve"><value>The rights confirmation is provided by the user and is not an independent review of catalog licenses.</value></data>
+  <data name="Genre_ActionAdventure" xml:space="preserve"><value>Action &amp; adventure</value></data>
+  <data name="Genre_Animation" xml:space="preserve"><value>Animation</value></data>
+  <data name="Genre_Comedy" xml:space="preserve"><value>Comedy</value></data>
+  <data name="Genre_Crime" xml:space="preserve"><value>Crime</value></data>
+  <data name="Genre_Documentary" xml:space="preserve"><value>Documentary</value></data>
+  <data name="Genre_Drama" xml:space="preserve"><value>Drama</value></data>
+  <data name="Genre_Family" xml:space="preserve"><value>Family</value></data>
+  <data name="Genre_ScienceFantasy" xml:space="preserve"><value>Science fiction &amp; fantasy</value></data>
+  <data name="Genre_History" xml:space="preserve"><value>History</value></data>
+  <data name="Genre_Horror" xml:space="preserve"><value>Horror</value></data>
+  <data name="Genre_Mystery" xml:space="preserve"><value>Mystery</value></data>
+  <data name="Genre_Romance" xml:space="preserve"><value>Romance</value></data>
+  <data name="Genre_Thriller" xml:space="preserve"><value>Thriller</value></data>
+  <data name="Genre_WarPolitics" xml:space="preserve"><value>War &amp; politics</value></data>
+  <data name="Genre_Western" xml:space="preserve"><value>Western</value></data>
+  <data name="Genre_Youth" xml:space="preserve"><value>Kids</value></data>
+  <data name="Genre_Reality" xml:space="preserve"><value>Reality</value></data>
+  <data name="Genre_Soap" xml:space="preserve"><value>Soap opera</value></data>
+  <data name="Genre_TalkShow" xml:space="preserve"><value>Talk show</value></data>
+  <data name="Home_DownloadedMovie" xml:space="preserve"><value>Downloaded</value></data>
+</root>

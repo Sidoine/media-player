@@ -334,7 +334,8 @@ public sealed class MediaDownloadService(
         .Where(item => item.Completed && Directory.Exists(item.Directory))
         .SelectMany(item => Directory.EnumerateFiles(item.Directory, "*", SearchOption.AllDirectories)
             .Where(file => new[] { ".mp4", ".mkv", ".webm", ".m4v", ".avi" }.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
-            .Select(file => new CompletedMediaFile(item.Title, file, item.MediaType)))
+            .Select(file => new CompletedMediaFile(item.Title, file, item.MediaType, item.TmdbId, item.Directory,
+                item.SeasonNumber, item.EpisodeNumber)))
         .ToArray();
 
     public bool IsCompletedMediaFilePath(string absolutePath)
@@ -629,4 +630,5 @@ public sealed record MediaDownloadRecord(string Key, int TmdbId, string MediaTyp
     int? Year, string Source, string ResultTitle, string Link, string? Size, string Directory, bool Completed,
     DateTimeOffset AddedAt, DateTimeOffset? CompletedAt, DateTimeOffset? LastViewedAt, int TrackerCount = 0,
     int? SeasonNumber = null, int? EpisodeNumber = null, int? RuntimeMinutes = null, long UploadedBytes = 0, bool SeedingStopped = false);
-public sealed record CompletedMediaFile(string Name, string FullPath, string MediaType);
+public sealed record CompletedMediaFile(string Name, string FullPath, string MediaType, int TmdbId, string Directory,
+    int? SeasonNumber, int? EpisodeNumber);
