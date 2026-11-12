@@ -64,6 +64,17 @@
   <data name="Playback_ErrorMessage" xml:space="preserve"><value>The native player could not decode this file. Its container or audio/video codec may not be supported by this device.</value></data>
   <data name="Watch_NoSubtitleForLanguage"><value>No {0} subtitles were found.</value></data>
   <data name="Watch_SubtitleSearchUnavailable"><value>Subtitle search is unavailable.</value></data>
+  <data name="Watch_Subtitles"><value>Subtitles</value></data>
+  <data name="Watch_SubtitleLanguage"><value>Language</value></data>
+  <data name="Watch_SelectSubtitle"><value>Choose a subtitle</value></data>
+  <data name="Watch_SubtitleAutomatic"><value>Automatic</value></data>
+  <data name="Watch_SubtitleOff"><value>Off</value></data>
+  <data name="Watch_SubtitleLocal"><value>Local</value></data>
+  <data name="Watch_SubtitleDownload"><value>Download</value></data>
+  <data name="Watch_SubtitleLoading"><value>Searching and loading subtitles…</value></data>
+  <data name="Watch_SubtitleNoChoices"><value>No matching subtitles found.</value></data>
+  <data name="Watch_VideoFile"><value>Video file</value></data>
+  <data name="Watch_SubtitleDownloadFailed"><value>Could not load this subtitle. Try another result.</value></data>
   <data name="Settings_ServerAddress" xml:space="preserve"><value>Server address</value></data>
   <data name="Settings_ServerDescription" xml:space="preserve"><value>Enter the address of your Bobine server on your local network.</value></data>
   <data name="Settings_SearchingNetwork" xml:space="preserve"><value>Searching the local network…</value></data>

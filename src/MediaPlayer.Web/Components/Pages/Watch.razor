@@ -5,12 +5,13 @@
 @using System.Globalization
 @inject HttpClient Http
 @inject IJSRuntime JS
+@inject NavigationManager Navigation
 @inject WatchProgressStore ProgressStore
 @inject media_player.Services.MediaStorageSettingsStore MediaSettings
 
 <PageTitle>@(MediaTitle ?? Download?.Title ?? "Lecture") · Bobine</PageTitle>
 
-<div class="watch-page">
+<div @ref="WatchPageElement" class="watch-page">
     @if (IsLoading)
     {
         <section class="watch-status"><span class="spinner"></span><span>@StatusMessage</span></section>
@@ -73,9 +74,50 @@
         <video @ref="VideoElement" class="watch-player" controls autoplay playsinline src="@StreamUrl" aria-label="@(MediaTitle ?? Download?.Title ?? "Lecture vidéo")">
             @if (SubtitleAvailable)
             {
-                <track kind="subtitles" srclang="@SubtitleLanguage" label="@SubtitleLanguageDisplayName" src="@SubtitleUrl" default />
+                <track @key="SelectedSubtitleKey" kind="subtitles" srclang="@SubtitleLanguage" label="@SubtitleLanguageDisplayName" src="@ActiveSubtitleUrl" default />
             }
         </video>
+        <div class="subtitle-picker-wrap">
+            <button type="button" class="subtitle-picker-toggle" aria-expanded="@IsSubtitlePickerOpen" @onclick="ToggleSubtitlePickerAsync">CC <span>@L["Watch_Subtitles"]</span></button>
+            @if (IsSubtitlePickerOpen)
+            {
+                <section class="subtitle-picker" aria-label="@L["Watch_Subtitles"]">
+                    <div class="subtitle-picker-heading"><strong>@L["Watch_Subtitles"]</strong><button type="button" aria-label="@L["Common_Close"]" @onclick="() => IsSubtitlePickerOpen = false">×</button></div>
+                    @if (!string.IsNullOrWhiteSpace(SubtitleVideoFileName))
+                    {
+                        <div class="subtitle-video-file"><span>@L["Watch_VideoFile"]</span><strong title="@SubtitleVideoFileName">@SubtitleVideoFileName</strong></div>
+                    }
+                    <label class="subtitle-picker-field"><span>@L["Watch_SubtitleLanguage"]</span>
+                        <select value="@SubtitleLanguageChoice" disabled="@IsLoadingSubtitleChoices" @onchange="ChangeSubtitleLanguageAsync">
+                            <option value="fr">Français</option>
+                            <option value="en">English</option>
+                        </select>
+                    </label>
+                    <label class="subtitle-picker-field"><span>@L["Watch_SelectSubtitle"]</span>
+                        <select value="@SelectedSubtitleKey" disabled="@(IsLoadingSubtitleChoices || IsSelectingSubtitle)" @onchange="SelectSubtitleAsync">
+                            <option value="auto">@L["Watch_SubtitleAutomatic"]</option>
+                            <option value="off">@L["Watch_SubtitleOff"]</option>
+                            @foreach (var choice in SubtitleChoices)
+                            {
+                                <option value="@choice.Key">@(choice.IsDownloaded ? L["Watch_SubtitleLocal"] : L["Watch_SubtitleDownload"]) · @choice.Name</option>
+                            }
+                        </select>
+                    </label>
+                    @if (IsLoadingSubtitleChoices || IsSelectingSubtitle)
+                    {
+                        <small class="subtitle-picker-message">@L["Watch_SubtitleLoading"]</small>
+                    }
+                    else if (!string.IsNullOrWhiteSpace(SubtitlePickerMessage))
+                    {
+                        <small class="subtitle-picker-message">@SubtitlePickerMessage</small>
+                    }
+                    else if (SubtitleChoices.Count == 0)
+                    {
+                        <small class="subtitle-picker-message">@L["Watch_SubtitleNoChoices"]</small>
+                    }
+                </section>
+            }
+        </div>
         @if (!string.IsNullOrWhiteSpace(SubtitleError))
         {
             <div class="subtitle-indicator" role="status" aria-live="polite">@SubtitleError</div>
@@ -110,15 +152,27 @@
     private bool NextEpisodeScheduled;
     private DateTimeOffset NextEpisodeRetryAfter;
     private bool SubtitleAvailable;
+    private bool PreferredSubtitleAvailable;
+    private bool IsSubtitlePickerOpen;
+    private bool IsLoadingSubtitleChoices;
+    private bool IsSelectingSubtitle;
+    private string SelectedSubtitleKey = "auto";
+    private string SubtitleLanguageChoice = "";
+    private string? SelectedSubtitleUrl;
+    private string? SubtitleVideoFileName;
+    private string? SubtitlePickerMessage;
+    private List<SubtitleChoice> SubtitleChoices = [];
     private string StatusMessage = "Connexion au téléchargement…";
     private string? ErrorMessage;
     private string? DownloadMessage;
     private string? StreamUrl;
     private string? SubtitleError;
     private string EpisodeQuery => SeasonNumber is not null && EpisodeNumber is not null ? $"&seasonNumber={SeasonNumber}&episodeNumber={EpisodeNumber}" : "";
-    private string SubtitleLanguage => MediaSettings.ResolvedSubtitleLanguage;
+    private string SubtitleLanguage => SelectedSubtitleKey == "auto" ? MediaSettings.ResolvedSubtitleLanguage : SubtitleLanguageChoice;
     private string SubtitleLanguageDisplayName => CultureInfo.GetCultureInfo(SubtitleLanguage).NativeName;
     private string SubtitleUrl => $"/api/downloads/{TmdbId}/subtitles?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}";
+    private string? ActiveSubtitleUrl => SelectedSubtitleKey == "auto" ? SubtitleUrl : SelectedSubtitleUrl;
+    private string SubtitleOptionsUrl => $"/api/downloads/{TmdbId}/subtitles/options?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}&language={Uri.EscapeDataString(SubtitleLanguageChoice)}";
     private string DisplayTitle => SeasonNumber is not null && EpisodeNumber is not null
         ? $"{Media?.Title ?? MediaTitle ?? "Série"} — S{SeasonNumber:00}E{EpisodeNumber:00}{(string.IsNullOrWhiteSpace(EpisodeTitle) ? "" : $" · {EpisodeTitle}")}"
         : MediaTitle ?? Download?.Title ?? "Lecture";
@@ -128,9 +182,12 @@
     private CancellationTokenSource? polling;
     private CancellationTokenSource? subtitleCancellation;
     private ElementReference VideoElement;
+    private ElementReference WatchPageElement;
     private IJSObjectReference? progressModule;
+    private IJSObjectReference? controlsModule;
     private DotNetObjectReference<Watch>? dotNetReference;
     private bool progressAttached;
+    private bool controlsAttached;
 
     protected override async Task OnParametersSetAsync()
     {
@@ -147,11 +204,40 @@
         NextEpisodeRetryAfter = DateTimeOffset.MinValue;
         SubtitleError = null;
         SubtitleAvailable = false;
+        PreferredSubtitleAvailable = false;
+        SelectedSubtitleKey = "auto";
+        SelectedSubtitleUrl = null;
+        SubtitleLanguageChoice = MediaSettings.ResolvedSubtitleLanguage;
+        SubtitleChoices = [];
+        SubtitleVideoFileName = null;
+        SubtitlePickerMessage = null;
+        IsSubtitlePickerOpen = false;
         StreamUrl = null;
         IsLoading = true;
 
         if (!string.IsNullOrWhiteSpace(LibraryPath))
         {
+            // Older bookmarks and cards may still point at the opaque library-file route.
+            // Cached library items already carry a persisted TMDB association; use it so
+            // playback and subtitle selection share the media-aware APIs.
+            if (LibraryPath.StartsWith("cache.", StringComparison.Ordinal))
+            {
+                try
+                {
+                    var library = await Http.GetFromJsonAsync<LibraryItemsResponse>("/api/library");
+                    var item = library?.Items.FirstOrDefault(candidate => string.Equals(candidate.Path, LibraryPath, StringComparison.Ordinal));
+                    if (item is { TmdbId: > 0 } && item.MediaType is "movie" or "tv")
+                    {
+                        var episodeQuery = item.SeasonNumber is not null && item.EpisodeNumber is not null
+                            ? $"?seasonNumber={item.SeasonNumber}&episodeNumber={item.EpisodeNumber}"
+                            : "";
+                        Navigation.NavigateTo($"/lecture/{item.MediaType}/{item.TmdbId}{episodeQuery}", replace: true);
+                        return;
+                    }
+                }
+                catch (HttpRequestException) { }
+            }
+
             StreamUrl = $"/api/library/play/{Uri.EscapeDataString(LibraryPath)}";
             IsLoading = false;
             return;
@@ -438,7 +524,19 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
-        if (string.IsNullOrWhiteSpace(StreamUrl) || LibraryPath is not null || progressAttached) return;
+        if (string.IsNullOrWhiteSpace(StreamUrl)) return;
+        try
+        {
+            if (!controlsAttached)
+            {
+                controlsModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/watchControls.js");
+                await controlsModule.InvokeVoidAsync("attach", WatchPageElement);
+                controlsAttached = true;
+            }
+        }
+        catch (JSDisconnectedException) { }
+
+        if (LibraryPath is not null || progressAttached) return;
         try
         {
             progressModule ??= await JS.InvokeAsync<IJSObjectReference>("import", "./js/playbackProgress.js");
@@ -481,12 +579,86 @@
         try
         {
             using var response = await Http.GetAsync(SubtitleUrl, ct);
-            SubtitleAvailable = response.IsSuccessStatusCode;
+            PreferredSubtitleAvailable = response.IsSuccessStatusCode;
+            if (SelectedSubtitleKey == "auto") SubtitleAvailable = PreferredSubtitleAvailable;
             await InvokeAsync(StateHasChanged);
-            if (!SubtitleAvailable) await ShowSubtitleErrorAsync(string.Format(L["Watch_NoSubtitleForLanguage"], SubtitleLanguageDisplayName), ct);
+            if (!PreferredSubtitleAvailable) await ShowSubtitleErrorAsync(string.Format(L["Watch_NoSubtitleForLanguage"], SubtitleLanguageDisplayName), ct);
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
         catch (HttpRequestException) { await ShowSubtitleErrorAsync(L["Watch_SubtitleSearchUnavailable"], ct); }
+    }
+
+    private async Task ToggleSubtitlePickerAsync()
+    {
+        IsSubtitlePickerOpen = !IsSubtitlePickerOpen;
+        if (!IsSubtitlePickerOpen) return;
+        SubtitleLanguageChoice = MediaSettings.ResolvedSubtitleLanguage;
+        await LoadSubtitleChoicesAsync();
+    }
+
+    private async Task ChangeSubtitleLanguageAsync(ChangeEventArgs args)
+    {
+        var language = args.Value?.ToString();
+        if (language is not ("fr" or "en")) return;
+        SubtitleLanguageChoice = language;
+        SelectedSubtitleKey = "off";
+        SelectedSubtitleUrl = null;
+        SubtitleAvailable = false;
+        await LoadSubtitleChoicesAsync();
+    }
+
+    private async Task LoadSubtitleChoicesAsync()
+    {
+        IsLoadingSubtitleChoices = true;
+        SubtitlePickerMessage = null;
+        try
+        {
+            var response = await Http.GetFromJsonAsync<SubtitleOptionsResponse>(SubtitleOptionsUrl);
+            SubtitleChoices = response?.Results ?? [];
+            SubtitleVideoFileName = response?.VideoFileName;
+        }
+        catch (HttpRequestException) { SubtitleChoices = []; SubtitlePickerMessage = L["Watch_SubtitleSearchUnavailable"]; }
+        finally { IsLoadingSubtitleChoices = false; }
+    }
+
+    private async Task SelectSubtitleAsync(ChangeEventArgs args)
+    {
+        var key = args.Value?.ToString() ?? "auto";
+        SubtitlePickerMessage = null;
+        if (key == "off")
+        {
+            SelectedSubtitleKey = key;
+            SelectedSubtitleUrl = null;
+            SubtitleAvailable = false;
+            return;
+        }
+        if (key == "auto")
+        {
+            SelectedSubtitleKey = key;
+            SelectedSubtitleUrl = null;
+            SubtitleAvailable = PreferredSubtitleAvailable;
+            return;
+        }
+
+        var choice = SubtitleChoices.FirstOrDefault(item => item.Key == key);
+        if (choice is null) return;
+        IsSelectingSubtitle = true;
+        try
+        {
+            var selection = new SubtitleSelectionRequest(key, SubtitleLanguageChoice);
+            using var response = await Http.PostAsJsonAsync($"/api/downloads/{TmdbId}/subtitles/select?mediaType={Uri.EscapeDataString(MediaType)}{EpisodeQuery}", selection);
+            if (!response.IsSuccessStatusCode)
+            {
+                SubtitlePickerMessage = L["Watch_SubtitleDownloadFailed"];
+                return;
+            }
+            SelectedSubtitleKey = key;
+            if (choice.Language is "fr" or "en") SubtitleLanguageChoice = choice.Language;
+            SelectedSubtitleUrl = $"/api/downloads/{TmdbId}/subtitles/selected/{Uri.EscapeDataString(key)}?mediaType={Uri.EscapeDataString(MediaType)}&language={Uri.EscapeDataString(SubtitleLanguageChoice)}{EpisodeQuery}";
+            SubtitleAvailable = true;
+        }
+        catch (HttpRequestException) { SubtitlePickerMessage = L["Watch_SubtitleDownloadFailed"]; }
+        finally { IsSelectingSubtitle = false; }
     }
 
     private async Task ShowSubtitleErrorAsync(string message, CancellationToken ct)
@@ -511,6 +683,12 @@
     {
         polling?.Cancel();
         subtitleCancellation?.Cancel();
+        if (controlsModule is not null)
+        {
+            try { await controlsModule.InvokeVoidAsync("detach", WatchPageElement); }
+            catch (JSDisconnectedException) { }
+            await controlsModule.DisposeAsync();
+        }
         if (progressModule is not null)
         {
             try { await progressModule.InvokeVoidAsync("detach", VideoElement); }
@@ -537,4 +715,9 @@
         int? SeasonNumber, int? EpisodeNumber, string? EpisodeTitle, int? RuntimeMinutes);
     private sealed record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
     private sealed record ErrorResponse(string Error);
+    private sealed record SubtitleOptionsResponse(string Language, bool SubtitlesConfigured, string? VideoFileName, List<SubtitleChoice> Results);
+    private sealed record SubtitleChoice(string Key, string Name, string Language, string Source, bool IsDownloaded, int MatchScore);
+    private sealed record SubtitleSelectionRequest(string Key, string? Language);
+    private sealed record LibraryItemsResponse(List<LibraryItem> Items);
+    private sealed record LibraryItem(string Name, string Path, int TmdbId, string MediaType, int? SeasonNumber, int? EpisodeNumber, string? PosterUrl = null);
 }

@@ -184,7 +184,19 @@
         finally { IsLoading = false; }
     }
 
-    private void Play(LocalFile file) => Navigation.NavigateTo($"/lecture/fichier/{file.Path}?title={Uri.EscapeDataString(DisplayMediaName(file.Name))}");
+    private void Play(LocalFile file)
+    {
+        if (file.TmdbId > 0 && file.MediaType is "movie" or "tv")
+        {
+            var episodeQuery = file.SeasonNumber is not null && file.EpisodeNumber is not null
+                ? $"?seasonNumber={file.SeasonNumber}&episodeNumber={file.EpisodeNumber}"
+                : "";
+            Navigation.NavigateTo($"/lecture/{file.MediaType}/{file.TmdbId}{episodeQuery}");
+            return;
+        }
+
+        Navigation.NavigateTo($"/lecture/fichier/{file.Path}?title={Uri.EscapeDataString(DisplayMediaName(file.Name))}");
+    }
 
     private async Task LoadDownloadsAsync()
     {
@@ -364,7 +376,7 @@
     public void Dispose() => downloadPolling?.Cancel();
 
     private sealed record LibraryResponse(List<LocalFile> Items);
-    private sealed record LocalFile(string Name, string Path);
+    private sealed record LocalFile(string Name, string Path, int TmdbId, string MediaType, int? SeasonNumber, int? EpisodeNumber, string? PosterUrl = null);
     private sealed record MediaPropertiesDto(string FileName, long SizeBytes, string? Duration, string? Resolution,
         List<string?> AudioTracks, List<string> SubtitleTracks);
     private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string State, double Progress, long DownloadRate,

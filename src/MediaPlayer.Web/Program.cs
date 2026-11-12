@@ -447,6 +447,40 @@ app.MapGet("/api/downloads/{tmdbId:int}/subtitles", async (int tmdbId, string? m
     var content = await subtitles.GetSubtitleAsync(videoPath, status.Title, ct);
     return content is null ? Results.NotFound() : Results.Bytes(content, "text/vtt; charset=utf-8");
 });
+app.MapGet("/api/downloads/{tmdbId:int}/subtitles/options", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, string? language, MediaDownloadService downloads, SubtitleService subtitles, CancellationToken ct) =>
+{
+    var type = mediaType ?? "movie";
+    var status = await downloads.GetStatusAsync(tmdbId, type, seasonNumber, episodeNumber, ct);
+    if (status is null) return Results.NotFound();
+    var videoPath = downloads.GetCachedVideoPath(tmdbId, type, seasonNumber, episodeNumber) ?? downloads.GetActiveVideoPath(tmdbId, type, seasonNumber, episodeNumber);
+    if (videoPath is null) return Results.NotFound();
+    var selectedLanguage = language is "en" or "fr" ? language : subtitles.ResolvedLanguage;
+    var choices = await subtitles.GetChoicesAsync(videoPath, selectedLanguage, ct);
+    return Results.Json(new { language = selectedLanguage, subtitlesConfigured = subtitles.IsConfigured, videoFileName = Path.GetFileName(videoPath), results = choices });
+});
+app.MapPost("/api/downloads/{tmdbId:int}/subtitles/select", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, SubtitleSelectionInput input, MediaDownloadService downloads, SubtitleService subtitles, CancellationToken ct) =>
+{
+    var type = mediaType ?? "movie";
+    var status = await downloads.GetStatusAsync(tmdbId, type, seasonNumber, episodeNumber, ct);
+    if (status is null) return Results.NotFound();
+    var videoPath = downloads.GetCachedVideoPath(tmdbId, type, seasonNumber, episodeNumber) ?? downloads.GetActiveVideoPath(tmdbId, type, seasonNumber, episodeNumber);
+    if (videoPath is null) return Results.NotFound();
+    var language = string.IsNullOrWhiteSpace(input.Language) ? subtitles.ResolvedLanguage : input.Language;
+    if (!MediaStorageSettingsStore.IsSupportedSubtitleLanguage(language)) return Results.BadRequest();
+    var selected = await subtitles.SelectAsync(videoPath, input.Key, language, ct);
+    return selected ? Results.Ok(new { key = input.Key }) : Results.NotFound();
+});
+app.MapGet("/api/downloads/{tmdbId:int}/subtitles/selected/{key}", async (int tmdbId, string key, string? mediaType, int? seasonNumber, int? episodeNumber, string? language, MediaDownloadService downloads, SubtitleService subtitles, CancellationToken ct) =>
+{
+    var type = mediaType ?? "movie";
+    var status = await downloads.GetStatusAsync(tmdbId, type, seasonNumber, episodeNumber, ct);
+    if (status is null) return Results.NotFound();
+    var videoPath = downloads.GetCachedVideoPath(tmdbId, type, seasonNumber, episodeNumber) ?? downloads.GetActiveVideoPath(tmdbId, type, seasonNumber, episodeNumber);
+    if (videoPath is null) return Results.NotFound();
+    var selectedLanguage = string.IsNullOrWhiteSpace(language) ? subtitles.ResolvedLanguage : language;
+    var content = await subtitles.ReadSelectedAsync(videoPath, key, selectedLanguage, ct);
+    return content is null ? Results.NotFound() : Results.Bytes(content, "text/vtt; charset=utf-8");
+});
 app.MapGet("/api/downloads/{tmdbId:int}/stream", async (int tmdbId, string? mediaType, int? seasonNumber, int? episodeNumber, MediaDownloadService downloads, CancellationToken ct) =>
 {
     var type = mediaType ?? "movie";
@@ -685,6 +719,7 @@ record TrackerInput(List<string> Urls);
 record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
 record ApiCredentialsInput(string? TmdbReadAccessToken, string? OpenSubtitlesApiKey);
 record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit, int? PreferredResolution, bool? EnableUpnp = null, string? SubtitleLanguage = null);
+record SubtitleSelectionInput(string Key, string? Language = null);
 public record TorrentCatalogSource(Guid Id, string Name, string Url, string ApiKey, bool RightsConfirmed, DateTimeOffset AddedAt);
 record LibraryItem(string Name, string Path, int TmdbId, string MediaType, int? SeasonNumber, int? EpisodeNumber, string? PosterUrl = null);
 record PlaybackProgressRequest(int TmdbId, string? MediaType, string Title, double CurrentTimeSeconds, double DurationSeconds,

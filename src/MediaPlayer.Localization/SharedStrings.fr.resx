@@ -64,6 +64,17 @@
   <data name="Playback_ErrorMessage" xml:space="preserve"><value>Le lecteur natif n’a pas pu décoder ce fichier. Le conteneur ou le codec audio/vidéo n’est peut-être pas pris en charge par cet appareil.</value></data>
   <data name="Watch_NoSubtitleForLanguage"><value>Aucun sous-titre en {0} trouvé.</value></data>
   <data name="Watch_SubtitleSearchUnavailable"><value>La recherche de sous-titres est indisponible.</value></data>
+  <data name="Watch_Subtitles"><value>Sous-titres</value></data>
+  <data name="Watch_SubtitleLanguage"><value>Langue</value></data>
+  <data name="Watch_SelectSubtitle"><value>Choisir un sous-titre</value></data>
+  <data name="Watch_SubtitleAutomatic"><value>Automatique</value></data>
+  <data name="Watch_SubtitleOff"><value>Désactivés</value></data>
+  <data name="Watch_SubtitleLocal"><value>Local</value></data>
+  <data name="Watch_SubtitleDownload"><value>Télécharger</value></data>
+  <data name="Watch_SubtitleLoading"><value>Recherche et chargement des sous-titres…</value></data>
+  <data name="Watch_SubtitleNoChoices"><value>Aucun sous-titre correspondant trouvé.</value></data>
+  <data name="Watch_VideoFile"><value>Fichier vidéo</value></data>
+  <data name="Watch_SubtitleDownloadFailed"><value>Impossible de charger ce sous-titre. Essayez un autre résultat.</value></data>
   <data name="Settings_ServerAddress" xml:space="preserve"><value>Adresse du serveur</value></data>
   <data name="Settings_ServerDescription" xml:space="preserve"><value>Indiquez l’adresse de votre serveur Bobine sur le réseau local.</value></data>
   <data name="Settings_SearchingNetwork" xml:space="preserve"><value>Recherche sur le réseau local…</value></data>
