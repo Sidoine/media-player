@@ -1,29 +1,65 @@
 @implements IDisposable
 @inject NavigationManager Navigation
+@inject HttpClient Http
 
-@if (IsCatalogPage)
-{
-    <form class="search-box topbar-search" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
-        <span>⌕</span>
-        <FormTextField TValue="string" InputOnly="true" UpdateOnInput="true" @bind-Value="SearchText" Placeholder="@Placeholder" AriaLabel="Rechercher dans TMDB" />
-        @if (!string.IsNullOrWhiteSpace(SearchText))
+<div class="catalog-search-wrap">
+        <form class="search-box topbar-search" @onsubmit="SubmitAsync" @onsubmit:preventDefault>
+            <span aria-hidden="true">⌕</span>
+            <FormTextField TValue="string" InputOnly="true" UpdateOnInput="true" @bind-Value="SearchText" @bind-Value:after="SearchTextChangedAsync" Placeholder="@Placeholder" AriaLabel="@L["Search_AriaLabel"]" role="combobox" aria-autocomplete="list" aria-expanded="@(Suggestions.Count > 0 && IsOpen)" aria-controls="catalog-search-suggestions" aria-activedescendant="@ActiveDescendant" @onkeydown="HandleKeyDown" @onfocus="HandleFocus" />
+            @if (!string.IsNullOrWhiteSpace(SearchText))
+            {
+                <button type="button" class="clear-search" aria-label="@L["Search_Clear"]" @onclick="ClearAsync">×</button>
+            }
+        </form>
+        @if (IsOpen && Suggestions.Count > 0)
         {
-            <button type="button" class="clear-search" aria-label="Effacer la recherche" @onclick="ClearAsync">×</button>
+            <div id="catalog-search-suggestions" class="catalog-search-suggestions" role="listbox">
+                @for (var index = 0; index < Suggestions.Count; index++)
+                {
+                    var item = Suggestions[index];
+                    var itemIndex = index;
+                    <button id="catalog-search-option-@itemIndex" type="button" class="catalog-search-option @(itemIndex == ActiveIndex ? "active" : null)" role="option" aria-selected="@(itemIndex == ActiveIndex)" @onmouseenter="() => ActiveIndex = itemIndex" @onclick="() => SelectSuggestion(item)">
+                        @if (!string.IsNullOrWhiteSpace(item.Poster))
+                        {
+                            <img src="@item.Poster" alt="" loading="lazy" />
+                        }
+                        else
+                        {
+                            <span class="catalog-search-no-poster" aria-hidden="true">▶</span>
+                        }
+                        <span class="catalog-search-option-copy"><strong>@item.Title</strong><small>@MediaTypeLabel(item.MediaType)@if (item.Year is not null) {<text> · @item.Year</text>}</small></span>
+                        @if (item.Rating > 0) { <span class="catalog-search-rating">★ @item.Rating.ToString("0.0")</span> }
+                    </button>
+                }
+            </div>
         }
-    </form>
-}
+        else if (IsOpen && IsLoading)
+        {
+            <div class="catalog-search-suggestions catalog-search-status">@L["Search_Loading"]</div>
+        }
+        else if (IsOpen && HasSearched && Suggestions.Count == 0)
+        {
+            <div class="catalog-search-suggestions catalog-search-status">@L["Search_NoResults"]</div>
+        }
+</div>
 
 @code {
     private string SearchText = "";
+    private List<SearchSuggestion> Suggestions = [];
+    private CancellationTokenSource? SearchCancellation;
+    private bool IsOpen;
+    private bool IsLoading;
+    private bool HasSearched;
+    private int ActiveIndex = -1;
 
     private string CurrentPath => Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
-    private bool IsCatalogPage => CurrentPath is "" or "films" or "series";
     private string Placeholder => CurrentPath switch
     {
-        "films" => "Rechercher un film…",
-        "series" => "Rechercher une série…",
-        _ => "Un film, une série…"
+        "films" => L["Search_PlaceholderMovies"],
+        "series" => L["Search_PlaceholderSeries"],
+        _ => L["Search_PlaceholderAll"]
     };
+    private string? ActiveDescendant => IsOpen && ActiveIndex >= 0 ? $"catalog-search-option-{ActiveIndex}" : null;
 
     protected override void OnInitialized()
     {
@@ -37,27 +73,115 @@
         return query.TryGetValue("query", out var value) ? value.ToString() : "";
     }
 
+    private async Task SearchTextChangedAsync()
+    {
+        SearchCancellation?.Cancel();
+        Suggestions.Clear();
+        ActiveIndex = -1;
+        HasSearched = false;
+        var query = SearchText.Trim();
+        if (query.Length < 3)
+        {
+            IsOpen = false;
+            IsLoading = false;
+            return;
+        }
+
+        IsOpen = true;
+        IsLoading = true;
+        var cancellation = new CancellationTokenSource();
+        SearchCancellation = cancellation;
+        try
+        {
+            await Task.Delay(250, cancellation.Token);
+            var response = await Http.GetFromJsonAsync<CatalogResponse>($"/api/catalog?query={Uri.EscapeDataString(query)}", cancellation.Token);
+            if (cancellation.IsCancellationRequested) return;
+            Suggestions = response?.Results
+                .Where(x => x.Id > 0 && (x.MediaType is "movie" or "tv"))
+                .Where(x => CurrentPath switch { "films" => x.MediaType == "movie", "series" => x.MediaType == "tv", _ => true })
+                .Take(7)
+                .ToList() ?? [];
+            HasSearched = true;
+        }
+        catch (OperationCanceledException) { }
+        catch (HttpRequestException) { Suggestions = []; HasSearched = true; }
+        finally
+        {
+            if (!cancellation.IsCancellationRequested)
+            {
+                IsLoading = false;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private Task HandleFocus(FocusEventArgs _)
+    {
+        if (SearchText.Trim().Length >= 3 && (Suggestions.Count > 0 || IsLoading || HasSearched)) IsOpen = true;
+        return Task.CompletedTask;
+    }
+
+    private Task HandleKeyDown(KeyboardEventArgs args)
+    {
+        if (args.Key == "Escape") { IsOpen = false; return Task.CompletedTask; }
+        if (!IsOpen || Suggestions.Count == 0) return Task.CompletedTask;
+        if (args.Key == "ArrowDown") { ActiveIndex = (ActiveIndex + 1) % Suggestions.Count; }
+        else if (args.Key == "ArrowUp") { ActiveIndex = ActiveIndex <= 0 ? Suggestions.Count - 1 : ActiveIndex - 1; }
+        else if (args.Key == "Enter" && ActiveIndex >= 0) { SelectSuggestion(Suggestions[ActiveIndex]); }
+        return Task.CompletedTask;
+    }
+
     private Task SubmitAsync()
     {
-        var route = CurrentPath is "films" or "series" ? CurrentPath : "films";
+        if (IsOpen && ActiveIndex >= 0 && ActiveIndex < Suggestions.Count)
+        {
+            SelectSuggestion(Suggestions[ActiveIndex]);
+            return Task.CompletedTask;
+        }
+        var route = CurrentPath is "films" or "series" ? CurrentPath : "";
         var query = SearchText.Trim();
-        Navigation.NavigateTo(string.IsNullOrWhiteSpace(query) ? $"/{route}" : $"/{route}?query={Uri.EscapeDataString(query)}");
+        IsOpen = false;
+        var baseRoute = string.IsNullOrWhiteSpace(route) ? "/" : $"/{route}";
+        Navigation.NavigateTo(string.IsNullOrWhiteSpace(query) ? baseRoute : $"{baseRoute}?query={Uri.EscapeDataString(query)}");
         return Task.CompletedTask;
     }
 
     private Task ClearAsync()
     {
         SearchText = "";
-        var route = CurrentPath is "films" or "series" ? CurrentPath : "";
-        Navigation.NavigateTo(string.IsNullOrWhiteSpace(route) ? "/" : $"/{route}");
+        Suggestions.Clear();
+        IsOpen = false;
+        if (CurrentPath is "films" or "series" or "")
+            Navigation.NavigateTo(CurrentPath is "films" or "series" ? $"/{CurrentPath}" : "/");
+        else if (ReadQuery().Length > 0)
+            Navigation.NavigateTo($"/{CurrentPath}");
         return Task.CompletedTask;
     }
 
+    private void SelectSuggestion(SearchSuggestion item)
+    {
+        IsOpen = false;
+        Navigation.NavigateTo($"/infos/{item.MediaType}/{item.Id}");
+    }
+
+    private string MediaTypeLabel(string? type) => type == "tv" ? L["Search_Series"] : L["Search_Movie"];
+
     private void OnLocationChanged(object? sender, Microsoft.AspNetCore.Components.Routing.LocationChangedEventArgs args)
     {
+        SearchCancellation?.Cancel();
         SearchText = ReadQuery();
+        Suggestions.Clear();
+        IsOpen = false;
         _ = InvokeAsync(StateHasChanged);
     }
 
-    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+    public void Dispose()
+    {
+        Navigation.LocationChanged -= OnLocationChanged;
+        SearchCancellation?.Cancel();
+        SearchCancellation?.Dispose();
+    }
+
+    private sealed record CatalogResponse(bool Configured, List<SearchSuggestion> Results);
+    private sealed record SearchSuggestion(int Id, string Title, string? Poster, string? MediaType, double Rating, int? Year);
 }

@@ -9,6 +9,15 @@
   <data name="Nav_Series" xml:space="preserve"><value>Series</value></data>
   <data name="Nav_Library" xml:space="preserve"><value>My library</value></data>
   <data name="Nav_Settings" xml:space="preserve"><value>Settings</value></data>
+  <data name="Search_PlaceholderMovies" xml:space="preserve"><value>Search movies…</value></data>
+  <data name="Search_PlaceholderSeries" xml:space="preserve"><value>Search series…</value></data>
+  <data name="Search_PlaceholderAll" xml:space="preserve"><value>A movie, a series…</value></data>
+  <data name="Search_AriaLabel" xml:space="preserve"><value>Search TMDB</value></data>
+  <data name="Search_Clear" xml:space="preserve"><value>Clear search</value></data>
+  <data name="Search_Loading" xml:space="preserve"><value>Searching…</value></data>
+  <data name="Search_NoResults" xml:space="preserve"><value>No results</value></data>
+  <data name="Search_Movie" xml:space="preserve"><value>Movie</value></data>
+  <data name="Search_Series" xml:space="preserve"><value>Series</value></data>
   <data name="Home_Featured" xml:space="preserve"><value>FEATURED</value></data>
   <data name="Home_FeaturedMovie" xml:space="preserve"><value>FEATURED · MOVIE</value></data>
   <data name="Home_FeaturedSeries" xml:space="preserve"><value>FEATURED · SERIES</value></data>

@@ -39,8 +39,6 @@
 </section>
 
 <div class="content-wrap">
-    <div class="status-line"><span class="live-dot"></span>@StatusMessage</div>
-
     @if (ActiveCatalog == "all" && ContinueWatching.Count > 0)
     {
         <section class="section watching-section" aria-labelledby="watching-title">
@@ -284,7 +282,6 @@
         _ => Movies
     };
     private List<MediaItem> HeroItems => IsSearching ? [] : VisibleMedia.Take(4).ToList();
-    private string StatusMessage => CatalogError ?? (Movies.Count > 0 ? L["Home_StatusSelected"] : L["Home_StatusPersonal"]);
     private string HeroEyebrow => Featured is null ? L["Home_Featured"] : L[Featured.MediaType == "tv" ? "Home_FeaturedSeries" : "Home_FeaturedMovie"];
     private static string HeroBackgroundStyle(MediaItem? item) => string.IsNullOrWhiteSpace(item?.Backdrop) ? "" : $"background-image:url('{item.Backdrop}')";
 
