@@ -122,3 +122,6 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .topbar .profile { position: absolute; top: 50%; right: 24px; margin: 0; transform: translateY(-50%); }
 .topbar .topbar-search { margin-right: 48px; }
 @media(max-width:650px) { .topbar .profile { top: 16px; right: 5%; transform: none; } .topbar .topbar-search { margin-right: 42px; } }
+
+.wordmark{display:flex;align-items:center;gap:9px}.wordmark img{width:34px;height:34px;object-fit:cover;border-radius:5px;flex:none}
+@media(max-width:650px){.wordmark img{width:30px;height:30px}}

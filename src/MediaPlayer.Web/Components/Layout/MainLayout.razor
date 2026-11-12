@@ -1,7 +1,10 @@
 @inherits LayoutComponentBase
 <div class="shell">
     <header class="topbar">
-        <a class="wordmark" href="/" aria-label="Bobine, @L["Nav_Home"]">BOBINE</a>
+        <a class="wordmark" href="/" aria-label="Bobine, @L["Nav_Home"]">
+            <img src="favicon.png" alt="" />
+            <span>BOBINE</span>
+        </a>
         <nav aria-label="@L["Nav_Home"]">
             <NavLink href="/" Match="NavLinkMatch.All">@L["Nav_Home"]</NavLink>
             <NavLink href="/films">@L["Nav_Movies"]</NavLink>
