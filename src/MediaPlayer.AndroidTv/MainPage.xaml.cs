@@ -1,7 +1,9 @@
+using System.Collections.Concurrent;
 using System.Net.Http.Json;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
+using System.Security.Cryptography;
 using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -46,6 +48,8 @@ public partial class MainPage : ContentPage
     private bool serverReachable;
     private bool catalogConfigured = true;
     private bool isDiscoveringServers;
+    private bool? lastCompactLayout;
+    private readonly ConcurrentDictionary<string, Lazy<Task<string?>>> imageFileTasks = new(StringComparer.Ordinal);
 
     public MainPage()
     {
@@ -59,7 +63,45 @@ public partial class MainPage : ContentPage
         }
 
         BuildNavigation();
+        SizeChanged += OnPageSizeChanged;
+        RootLayout.SizeChanged += OnPageSizeChanged;
         _ = LoadCatalogAsync();
+    }
+
+    private double ViewportWidth => ResponsiveLayoutMetrics.GetViewportWidth(RootLayout.Width, Width, PageScroll.Width);
+    private bool IsCompactLayout => ResponsiveLayoutMetrics.IsCompact(ViewportWidth, IsWindowsDesktop, DeviceInfo.Idiom == DeviceIdiom.Phone);
+
+    private void OnPageSizeChanged(object? sender, EventArgs e)
+    {
+        var compact = IsCompactLayout;
+        if (lastCompactLayout == compact) return;
+        lastCompactLayout = compact;
+
+        RootLayout.RowDefinitions[0].Height = compact ? 56 : 78;
+        HeaderBar.Padding = compact ? new Thickness(12, 0) : new Thickness(64, 0);
+        HeaderBar.ColumnDefinitions.Clear();
+        HeaderBar.ColumnDefinitions.Add(new ColumnDefinition { Width = compact ? GridLength.Star : GridLength.Auto });
+        HeaderBar.ColumnDefinitions.Add(new ColumnDefinition { Width = compact ? GridLength.Auto : GridLength.Star });
+        if (!compact) HeaderBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var brand = HeaderBar.Children.OfType<Label>().FirstOrDefault();
+        if (brand is not null) brand.IsVisible = !compact;
+        Grid.SetColumn(NavigationScroll, compact ? 0 : 1);
+        Grid.SetColumn(SettingsButton, compact ? 1 : 2);
+        NavigationScroll.HorizontalOptions = compact ? LayoutOptions.Fill : LayoutOptions.Center;
+        HeaderNavigation.Spacing = compact ? 4 : 12;
+        foreach (var child in HeaderNavigation.Children.OfType<Button>())
+        {
+            child.Padding = compact ? new Thickness(10, 8) : new Thickness(20, 12);
+            child.FontSize = compact ? 13 : 16;
+        }
+        SettingsButton.WidthRequest = compact ? 44 : 58;
+        SettingsButton.HeightRequest = compact ? 44 : 48;
+        if (!showingSettings && !showingDetails && !showingPlayer && PageContent.Children.Count > 0)
+        {
+            if (activeSection == "Bibliothèque") _ = ShowLibraryAsync();
+            else BuildHome(resetScroll: false);
+        }
     }
 
     private void BuildNavigation()
@@ -101,10 +143,14 @@ public partial class MainPage : ContentPage
 
         var featured = visible.FirstOrDefault();
         Button? focusTarget = null;
-        var heroHeight = Math.Clamp((PageScroll.Height + HeaderBar.Height) * 0.78, 625, 790);
+        var heroHeight = ResponsiveLayoutMetrics.GetHeroHeight(PageScroll.Height, HeaderBar.Height, IsCompactLayout);
         var hero = new Grid { HeightRequest = heroHeight, BackgroundColor = Color.FromArgb("#17181D") };
         if (!string.IsNullOrWhiteSpace(featured?.Backdrop))
-            hero.Children.Add(new Image { Source = featured.Backdrop, Aspect = Aspect.AspectFill });
+        {
+            var backdrop = new Image { Aspect = Aspect.AspectFill };
+            hero.Children.Add(backdrop);
+            _ = LoadImageIntoAsync(backdrop, featured.Backdrop);
+        }
         hero.Children.Add(new BoxView
         {
             Background = new LinearGradientBrush(new GradientStopCollection
@@ -127,20 +173,20 @@ public partial class MainPage : ContentPage
         var copy = new VerticalStackLayout
         {
             Spacing = 14,
-            Padding = new Thickness(64, 0, 32, 84),
+            Padding = IsCompactLayout ? new Thickness(20, 0, 20, 28) : new Thickness(64, 0, 32, 84),
             VerticalOptions = LayoutOptions.End,
-            HorizontalOptions = LayoutOptions.Start,
-            MaximumWidthRequest = 650
+            HorizontalOptions = IsCompactLayout ? LayoutOptions.Fill : LayoutOptions.Start,
+            MaximumWidthRequest = IsCompactLayout ? PageScroll.Width : 650
         };
         copy.Add(Eyebrow(featured is null ? T("Home_PersonalCinema") : T(featured.MediaType == "tv" ? "Home_FeaturedSeries" : "Home_FeaturedMovie")));
-        copy.Add(new Label { Text = featured?.Title ?? message ?? T("Home_Tagline"), FontSize = 56, FontAttributes = FontAttributes.Bold, TextColor = Colors.White, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2 });
+        copy.Add(new Label { Text = featured?.Title ?? message ?? T("Home_Tagline"), FontSize = IsCompactLayout ? 34 : 56, FontAttributes = FontAttributes.Bold, TextColor = Colors.White, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2 });
         var heroOverview = new Label
         {
             Text = featured?.Overview ?? T("Home_Intro"),
-            FontSize = 16,
+            FontSize = IsCompactLayout ? 14 : 16,
             TextColor = Color.FromArgb("#D1D1D6"),
             LineBreakMode = LineBreakMode.TailTruncation,
-            MaxLines = 4,
+            MaxLines = IsCompactLayout ? 3 : 4,
             MaximumWidthRequest = 560
         };
         copy.Add(heroOverview);
@@ -171,7 +217,7 @@ public partial class MainPage : ContentPage
         hero.Children.Add(copy);
         PageContent.Add(hero);
 
-        var body = new VerticalStackLayout { Padding = new Thickness(64, 8, 64, 24), Spacing = 10 };
+        var body = new VerticalStackLayout { Padding = IsCompactLayout ? new Thickness(16, 8, 16, 24) : new Thickness(64, 8, 64, 24), Spacing = 10 };
 
         if (catalog.Count == 0)
         {
@@ -219,7 +265,7 @@ public partial class MainPage : ContentPage
             ItemsLayout = new LinearItemsLayout(ItemsLayoutOrientation.Horizontal) { ItemSpacing = IsWindowsDesktop ? Math.Clamp(posterWidth * 0.08, 16, 24) : 16 },
             ItemSizingStrategy = ItemSizingStrategy.MeasureFirstItem,
             SelectionMode = SelectionMode.None,
-            HeightRequest = IsWindowsDesktop ? posterHeight + 66 : 140,
+            HeightRequest = posterHeight + (IsCompactLayout ? 58 : IsWindowsDesktop ? 66 : 54),
             Margin = new Thickness(0, 4, 0, 4),
             ItemTemplate = new DataTemplate(() =>
             {
@@ -277,9 +323,14 @@ public partial class MainPage : ContentPage
     private View CreatePosterCard(MediaItem item, double posterWidth, double posterHeight, out Border posterBorder, out Button hitTarget)
     {
         var imageGrid = new Grid { HeightRequest = posterHeight, WidthRequest = posterWidth, BackgroundColor = Color.FromArgb("#24252D") };
-        if (!string.IsNullOrWhiteSpace(item.Poster)) imageGrid.Add(new Image { Source = item.Poster, Aspect = Aspect.AspectFill });
+        if (!string.IsNullOrWhiteSpace(item.Poster))
+        {
+            var poster = new Image { Aspect = Aspect.AspectFill };
+            imageGrid.Add(poster);
+            _ = LoadImageIntoAsync(poster, item.Poster);
+        }
         else imageGrid.Add(new Label { Text = item.Title, TextColor = Colors.White, FontAttributes = FontAttributes.Bold, HorizontalTextAlignment = TextAlignment.Center, VerticalTextAlignment = TextAlignment.Center, Padding = 12 });
-        hitTarget = new Button { Text = "", BackgroundColor = Colors.Transparent, BorderWidth = 0, CornerRadius = 0, WidthRequest = posterWidth, HeightRequest = posterHeight, Padding = 0 };
+        hitTarget = new Button { Text = "", BackgroundColor = Colors.Transparent, BorderWidth = 0, CornerRadius = 0, WidthRequest = posterWidth, HeightRequest = posterHeight, Padding = 0, Opacity = 0 };
         hitTarget.Clicked += async (_, _) =>
         {
             if (!string.IsNullOrWhiteSpace(item.LibraryPath))
@@ -289,11 +340,11 @@ public partial class MainPage : ContentPage
         };
         imageGrid.Add(hitTarget);
 
-        var card = new VerticalStackLayout { WidthRequest = posterWidth, Spacing = IsWindowsDesktop ? 5 : 2, Margin = new Thickness(3, 4, 3, 4) };
+        var card = new VerticalStackLayout { WidthRequest = posterWidth, Spacing = IsWindowsDesktop ? 5 : 4, Margin = new Thickness(3, 4, 3, 4) };
         posterBorder = new Border { Stroke = Color.FromArgb("#454752"), StrokeThickness = 1, StrokeShape = new Microsoft.Maui.Controls.Shapes.RoundRectangle { CornerRadius = 5 }, Content = imageGrid };
         card.Add(posterBorder);
-        card.Add(new Label { Text = item.Title, TextColor = Colors.White, FontSize = IsWindowsDesktop ? 16 : 13, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 });
-        card.Add(new Label { Text = item.LibraryPath is not null ? item.CurrentTimeSeconds > 0 ? T("Library_Resume") : T("Library_InLibrary") : T(item.MediaType == "tv" ? "Category_Series" : "Category_Movie"), TextColor = Muted, FontSize = IsWindowsDesktop ? 13 : 11 });
+        card.Add(new Label { Text = item.Title, TextColor = Colors.White, FontSize = IsCompactLayout ? 14 : IsWindowsDesktop ? 16 : 13, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 1 });
+        card.Add(new Label { Text = item.LibraryPath is not null ? item.CurrentTimeSeconds > 0 ? T("Library_Resume") : T("Library_InLibrary") : T(item.MediaType == "tv" ? "Category_Series" : "Category_Movie"), TextColor = Muted, FontSize = IsCompactLayout ? 12 : IsWindowsDesktop ? 13 : 11 });
         if (item.DurationSeconds > 0)
             card.Add(new ProgressBar { Progress = Math.Clamp(item.CurrentTimeSeconds / item.DurationSeconds, 0, 1), ProgressColor = Red, BackgroundColor = Panel, HeightRequest = 4 });
         return card;
@@ -303,9 +354,8 @@ public partial class MainPage : ContentPage
 
     private double GetPosterCardWidth()
     {
-        if (!IsWindowsDesktop) return 62;
-        var viewportWidth = PageScroll.Width > 0 ? PageScroll.Width : 1280;
-        return Math.Clamp(viewportWidth * 0.12, 145, 210);
+        var viewportWidth = ViewportWidth > 0 ? ViewportWidth : 1280;
+        return ResponsiveLayoutMetrics.GetPosterWidth(viewportWidth, IsCompactLayout, IsWindowsDesktop);
     }
 
     public bool HandleVerticalDpad(int direction)
@@ -427,7 +477,7 @@ public partial class MainPage : ContentPage
         showingDetails = true;
         PageContent.Clear();
         _ = PageScroll.ScrollToAsync(0, 0, false);
-        PageContent.Add(new Label { Text = T("Details_Loading"), TextColor = Muted, FontSize = 20, Margin = new Thickness(80, 60) });
+        PageContent.Add(new Label { Text = T("Details_Loading"), TextColor = Muted, FontSize = 20, Margin = IsCompactLayout ? new Thickness(20, 36) : new Thickness(80, 60) });
         try
         {
             using var client = CreateClient();
@@ -436,18 +486,23 @@ public partial class MainPage : ContentPage
             if (details is null) throw new HttpRequestException(T("Details_NoResponse"));
             var playableFile = type == "movie" ? await FindLibraryItemAsync(item, details.Title, client) : null;
             PageContent.Clear();
-            var layout = new Grid { HeightRequest = PageScroll.Height > 0 ? PageScroll.Height : 460, BackgroundColor = Panel };
-            if (!string.IsNullOrWhiteSpace(details.Backdrop)) layout.Add(new Image { Source = details.Backdrop, Aspect = Aspect.AspectFill, Opacity = 0.33 });
+            var layout = new Grid { HeightRequest = IsCompactLayout ? Math.Max(PageScroll.Height, 620) : PageScroll.Height > 0 ? PageScroll.Height : 460, BackgroundColor = Panel };
+            if (!string.IsNullOrWhiteSpace(details.Backdrop))
+            {
+                var backdrop = new Image { Aspect = Aspect.AspectFill, Opacity = 0.33 };
+                layout.Add(backdrop);
+                _ = LoadImageIntoAsync(backdrop, details.Backdrop);
+            }
             layout.Add(new BoxView { BackgroundColor = Color.FromArgb("#CC090A0E") });
-            var text = new VerticalStackLayout { Spacing = 10, Padding = new Thickness(80, 34), VerticalOptions = LayoutOptions.End, MaximumWidthRequest = 1100 };
+            var text = new VerticalStackLayout { Spacing = IsCompactLayout ? 8 : 10, Padding = IsCompactLayout ? new Thickness(20, 24) : new Thickness(80, 34), VerticalOptions = LayoutOptions.End, MaximumWidthRequest = 1100 };
             text.Add(Eyebrow(T(type == "tv" ? "Details_Series" : "Details_Movie")));
-            text.Add(new Label { Text = details.Title, TextColor = Colors.White, FontSize = 46, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation });
+            text.Add(new Label { Text = details.Title, TextColor = Colors.White, FontSize = IsCompactLayout ? 32 : 46, FontAttributes = FontAttributes.Bold, LineBreakMode = LineBreakMode.TailTruncation, MaxLines = 2 });
             var facts = new List<string>();
             if (details.Year is not null) facts.Add(details.Year.Value.ToString());
             if (details.Rating > 0) facts.Add($"★ {details.Rating:0.0} / 10");
             if (details.RuntimeMinutes is not null) facts.Add($"{details.RuntimeMinutes} min");
             if (details.SeasonCount is not null) facts.Add($"{details.SeasonCount} saison(s)");
-            if (facts.Count > 0) text.Add(new Label { Text = string.Join("     ·     ", facts), TextColor = Colors.White, FontSize = 16 });
+            if (facts.Count > 0) text.Add(new Label { Text = string.Join("  ·  ", facts), TextColor = Colors.White, FontSize = IsCompactLayout ? 14 : 16 });
             if (details.Genres is { Count: > 0 }) text.Add(new Label { Text = string.Join(" · ", details.Genres), TextColor = Muted, FontSize = 15 });
             Button? playButton = null;
             if (playableFile is not null)
@@ -462,7 +517,7 @@ public partial class MainPage : ContentPage
                 };
                 text.Add(playButton);
             }
-            text.Add(new Label { Text = string.IsNullOrWhiteSpace(details.Overview) ? T("Details_NoOverview") : details.Overview, TextColor = Color.FromArgb("#D0D1D6"), FontSize = 18, LineHeight = 1.35, MaximumWidthRequest = 850, MaxLines = 4 });
+            text.Add(new Label { Text = string.IsNullOrWhiteSpace(details.Overview) ? T("Details_NoOverview") : details.Overview, TextColor = Color.FromArgb("#D0D1D6"), FontSize = IsCompactLayout ? 15 : 18, LineHeight = 1.35, MaximumWidthRequest = 850, MaxLines = IsCompactLayout ? 6 : 4 });
             layout.Add(text);
             PageContent.Add(layout);
             _ = PageScroll.ScrollToAsync(0, 0, false);
@@ -520,10 +575,10 @@ public partial class MainPage : ContentPage
         carouselRows.Clear();
         focusedCarouselItem = null;
         PageContent.Clear();
-        var body = new VerticalStackLayout { Padding = new Thickness(76, 40), Spacing = 20 };
+        var body = new VerticalStackLayout { Padding = IsCompactLayout ? new Thickness(18, 24) : new Thickness(76, 40), Spacing = 20 };
         body.Add(Eyebrow(T("Library_Collection")));
-        body.Add(new Label { Text = T("Library_Title"), TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
-        body.Add(new Label { Text = T("Library_Description"), TextColor = Muted, FontSize = 17 });
+        body.Add(new Label { Text = T("Library_Title"), TextColor = Colors.White, FontSize = IsCompactLayout ? 30 : 38, FontAttributes = FontAttributes.Bold });
+        body.Add(new Label { Text = T("Library_Description"), TextColor = Muted, FontSize = IsCompactLayout ? 15 : 17 });
         PageContent.Add(body);
         try
         {
@@ -653,8 +708,12 @@ public partial class MainPage : ContentPage
             };
 
             var buttonRow = new HorizontalStackLayout { Spacing = 10, VerticalOptions = LayoutOptions.Center };
-            var backButton = CreatePlayerControlButton(returnToDetails is null ? T("Playback_BackToLibrary") : T("Playback_BackToDetails"));
-            backButton.Clicked += async (_, _) => await ReturnFromPlayerAsync();
+            if (PlayerControlVisibility.ShowReturnButton(DeviceInfo.Platform == DevicePlatform.Android))
+            {
+                var backButton = CreatePlayerControlButton(returnToDetails is null ? T("Playback_BackToLibrary") : T("Playback_BackToDetails"));
+                backButton.Clicked += async (_, _) => await ReturnFromPlayerAsync();
+                buttonRow.Children.Add(backButton);
+            }
             var rewindButton = CreatePlayerControlButton(T("Playback_Rewind10"));
             rewindButton.Clicked += async (_, _) => await SeekPlayerByAsync(player, -10);
             var pauseButton = CreatePlayerControlButton(T("Playback_Pause"));
@@ -675,7 +734,6 @@ public partial class MainPage : ContentPage
             };
             var forwardButton = CreatePlayerControlButton(T("Playback_Forward10"));
             forwardButton.Clicked += async (_, _) => await SeekPlayerByAsync(player, 10);
-            buttonRow.Children.Add(backButton);
             buttonRow.Children.Add(rewindButton);
             buttonRow.Children.Add(pauseButton);
             buttonRow.Children.Add(forwardButton);
@@ -693,7 +751,7 @@ public partial class MainPage : ContentPage
             player.GestureRecognizers.Add(tap);
             ShowPlayerControls(overlay, player);
         }
-        else
+        else if (PlayerControlVisibility.ShowReturnButton(DeviceInfo.Platform == DevicePlatform.Android))
         {
             var backButton = CreatePlayerControlButton(returnToDetails is null ? T("Playback_BackToLibrary") : T("Playback_BackToDetails"));
             backButton.HorizontalOptions = LayoutOptions.Start;
@@ -1106,9 +1164,63 @@ public partial class MainPage : ContentPage
         return client;
     }
 
-    private static View ErrorPanel(string message, Func<Task> retry)
+    private async Task LoadImageIntoAsync(Image image, string? imagePath)
     {
-        var layout = new VerticalStackLayout { Padding = new Thickness(80, 60), Spacing = 18 };
+        var uri = MediaImageUri.Resolve(imagePath, serverUrl);
+        if (uri is null) return;
+
+        var cachePath = await imageFileTasks.GetOrAdd(uri.AbsoluteUri,
+            _ => new Lazy<Task<string?>>(() => DownloadImageToCacheAsync(uri))).Value;
+        if (cachePath is null)
+        {
+            imageFileTasks.TryRemove(uri.AbsoluteUri, out _);
+            return;
+        }
+        if (image.Parent is null) return;
+        await MainThread.InvokeOnMainThreadAsync(() =>
+        {
+            if (image.Parent is not null) image.Source = ImageSource.FromFile(cachePath);
+        });
+    }
+
+    private async Task<string?> DownloadImageToCacheAsync(Uri uri)
+    {
+        var extension = Path.GetExtension(uri.AbsolutePath);
+        if (extension.Length is < 2 or > 6 || extension.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '.'))
+            extension = ".img";
+
+        var cacheDirectory = Path.Combine(FileSystem.CacheDirectory, "catalog-images");
+        var cachePath = Path.Combine(cacheDirectory,
+            Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(uri.AbsoluteUri))) + extension.ToLowerInvariant());
+        if (File.Exists(cachePath)) return cachePath;
+
+        var temporaryPath = cachePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            Directory.CreateDirectory(cacheDirectory);
+            using var client = CreateClient();
+            using var response = await client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead);
+            if (!response.IsSuccessStatusCode || response.Content.Headers.ContentType?.MediaType?.StartsWith("image/", StringComparison.OrdinalIgnoreCase) != true)
+                return null;
+
+            await using (var output = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
+                await response.Content.CopyToAsync(output);
+            File.Move(temporaryPath, cachePath, overwrite: true);
+            return cachePath;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath)) File.Delete(temporaryPath);
+        }
+    }
+
+    private View ErrorPanel(string message, Func<Task> retry)
+    {
+        var layout = new VerticalStackLayout { Padding = IsCompactLayout ? new Thickness(20, 32) : new Thickness(80, 60), Spacing = 18 };
         layout.Add(new Label { Text = message, TextColor = Color.FromArgb("#FF8C92"), FontSize = 18 });
         var button = CreateButton(T("Common_Retry"), primary: true);
         button.Clicked += async (_, _) => await retry();
@@ -1177,10 +1289,10 @@ public partial class MainPage : ContentPage
         showingDetails = false;
         BuildNavigation();
         PageContent.Clear();
-        var panel = new VerticalStackLayout { Padding = new Thickness(80, 66), Spacing = 18, MaximumWidthRequest = 900, HorizontalOptions = LayoutOptions.Start };
+        var panel = new VerticalStackLayout { Padding = IsCompactLayout ? new Thickness(20, 28) : new Thickness(80, 66), Spacing = 18, MaximumWidthRequest = 900, HorizontalOptions = IsCompactLayout ? LayoutOptions.Fill : LayoutOptions.Start };
         panel.Add(Eyebrow("CONNEXION"));
-        panel.Add(new Label { Text = T("Settings_ServerAddress"), TextColor = Colors.White, FontSize = 38, FontAttributes = FontAttributes.Bold });
-        panel.Add(new Label { Text = T("Settings_ServerDescription"), TextColor = Muted, FontSize = 18 });
+        panel.Add(new Label { Text = T("Settings_ServerAddress"), TextColor = Colors.White, FontSize = IsCompactLayout ? 29 : 38, FontAttributes = FontAttributes.Bold });
+        panel.Add(new Label { Text = T("Settings_ServerDescription"), TextColor = Muted, FontSize = IsCompactLayout ? 15 : 18 });
         var address = new Entry { Text = serverUrl, Placeholder = "http://brique2:6050", TextColor = Colors.White, PlaceholderColor = Muted, BackgroundColor = Panel, FontSize = 20, ReturnType = ReturnType.Go };
         var status = new Label { TextColor = Color.FromArgb("#FF8C92"), FontSize = 15, IsVisible = false };
         var results = new VerticalStackLayout { Spacing = 8 };

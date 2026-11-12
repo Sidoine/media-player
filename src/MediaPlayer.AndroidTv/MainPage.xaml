@@ -3,10 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="MediaPlayer.AndroidTv.MainPage"
              BackgroundColor="#090A0E">
-    <Grid RowDefinitions="78,*" BackgroundColor="#090A0E">
+    <Grid x:Name="RootLayout" RowDefinitions="78,*" BackgroundColor="#090A0E">
         <Grid x:Name="HeaderBar" Grid.Row="0" Padding="64,0" ColumnDefinitions="Auto,*,Auto" BackgroundColor="#101116">
             <Label Text="ÉCRAN" TextColor="#E50914" FontAttributes="Bold" FontSize="27" VerticalOptions="Center" />
-            <HorizontalStackLayout x:Name="HeaderNavigation" Grid.Column="1" Spacing="12" VerticalOptions="Center" HorizontalOptions="Center" />
+            <ScrollView x:Name="NavigationScroll" Grid.Column="1" Orientation="Horizontal" HorizontalScrollBarVisibility="Never" VerticalOptions="Center" HorizontalOptions="Center">
+                <HorizontalStackLayout x:Name="HeaderNavigation" Spacing="12" VerticalOptions="Center" />
+            </ScrollView>
             <Button x:Name="SettingsButton" Grid.Column="2" Text="⚙" Clicked="OnSettingsClicked"
                     BackgroundColor="#24252D" TextColor="White" FontSize="23" WidthRequest="58" HeightRequest="48" CornerRadius="8" />
         </Grid>

@@ -5,6 +5,7 @@
     <Project Path="src/MediaPlayer.Web/MediaPlayer.Web.csproj" />
   </Folder>
   <Folder Name="/tests/">
+    <Project Path="tests/MediaPlayer.AndroidTv.Tests/MediaPlayer.AndroidTv.Tests.csproj" />
     <Project Path="tests/MediaPlayer.Tests/MediaPlayer.Tests.csproj" />
   </Folder>
 </Solution>

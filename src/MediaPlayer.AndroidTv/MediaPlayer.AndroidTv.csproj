@@ -19,6 +19,10 @@
     <AndroidUseCleartextTraffic>true</AndroidUseCleartextTraffic>
     <MauiXamlInflator>SourceGen</MauiXamlInflator>
   </PropertyGroup>
+
+  <PropertyGroup Condition="'$(TargetFramework)' == 'net10.0-android'">
+    <AndroidStoreUncompressedFileExtensions>$(AndroidStoreUncompressedFileExtensions);so</AndroidStoreUncompressedFileExtensions>
+  </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\MediaPlayer.Localization\MediaPlayer.Localization.csproj" />
   </ItemGroup>

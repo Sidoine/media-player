@@ -30,6 +30,12 @@ Le client peut aussi être exécuté comme application Windows pour accélérer 
 dotnet run --project src/MediaPlayer.AndroidTv/MediaPlayer.AndroidTv.csproj -f net10.0-windows10.0.19041.0 -p:WindowsPackageType=None
 ```
 
+Les règles de mise en page responsive sont couvertes par les tests multiplateformes du client :
+
+```powershell
+dotnet test tests/MediaPlayer.AndroidTv.Tests/MediaPlayer.AndroidTv.Tests.csproj
+```
+
 ## Lecture
 
 La navigation, les fiches et le lecteur sont natifs ; aucune URL média n’est envoyée à une application externe. Le lecteur lit le flux de la bibliothèque avec MediaElement sur Android TV et Windows. La prise en charge des conteneurs et codecs dépend des décodeurs disponibles sur l’appareil.
