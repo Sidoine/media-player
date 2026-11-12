@@ -18,3 +18,5 @@ tests/MediaPlayer.Playwright/.cache/
 **/appsettings*.json
 **/Properties/launchSettings.json
 !src/MediaPlayer.Web/Properties/launchSettings.json
+.vs
+.codex-remote-attachments
