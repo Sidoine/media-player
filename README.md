@@ -37,25 +37,25 @@ Set the following environment variables or use .NET user secrets:
 
 | Setting | Environment variable | .NET user secret | Purpose |
 | --- | --- | --- | --- |
-| TMDB read access token | `TMDB_READ_ACCESS_TOKEN` | `TMDB:ReadAccessToken` | Catalog metadata and artwork |
-| OpenSubtitles API key | `OPENSUBTITLES_API_KEY` | `OpenSubtitles:ApiKey` | Subtitle integration |
-| Local media directory | `MEDIA_ROOT` | — | Root directory for local media |
+| TMDB read access token | `TMDB__ReadAccessToken` | `TMDB:ReadAccessToken` | Catalog metadata and artwork |
+| OpenSubtitles API key | `OpenSubtitles__ApiKey` | `OpenSubtitles:ApiKey` | Subtitle integration |
+| Local media and download directory | `Media__Root` | — | Root directory for the library and downloaded media |
 
 Torznab indexer URLs and API keys are configured in the web interface. Credentials entered there are stored encrypted in `App_Data/api-credentials.json`; environment variables and .NET user secrets take precedence. Local settings, credentials, cache, and other user data belong in `App_Data` and are excluded from Git.
 
 The server caches Cardigann v11 indexer definitions in `App_Data/indexer-definitions`. Searches support definitions using JSON responses and their default settings. HTML/XML responses, account-based indexers, and custom per-indexer settings are not supported.
 
-Downloaded media is stored in `App_Data/media-cache`, with a default cache limit of 500 GiB. Completed media appears in the library; when the limit is approached, older viewed media is removed first. The limit can be changed with `Media:CacheMaxBytes`.
+The library and downloaded media share the directory configured by `Media__Root`. Docker Compose uses `/media`; other deployments default to `App_Data/media-cache`. The default cache limit is 500 GiB and can be changed with `Media:CacheMaxBytes`. When the limit is approached, older viewed media is removed first.
 
 ## Docker Compose
 
-Docker Compose publishes the server on port 8080, mounts `./data/media` read-only at `/media`, and persists application data in `./config/media-player`:
+Docker Compose publishes the server on port 8080, mounts `./data/media` at `/media` for the library and downloads, and persists application data in `./config/media-player`:
 
 ```powershell
 docker compose up --build
 ```
 
-Set `TMDB_READ_ACCESS_TOKEN` in the environment before starting Compose to configure TMDB.
+Set `TMDB__ReadAccessToken` or `OpenSubtitles__ApiKey` in the environment before starting Compose to configure external services.
 
 ## Android TV client
 

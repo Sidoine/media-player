@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Http.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
@@ -57,7 +58,10 @@ public sealed class CatalogApiTests : IDisposable
         using var client = CreateClient();
         var html = await client.GetStringAsync("/");
         Assert.Contains("BOBINE", html);
-        Assert.Contains("_framework/blazor.web.js", html);
+        var scriptPath = Regex.Match(html, "src=\"([^\"]*blazor\\.web[^\"]*)\"").Groups[1].Value;
+        Assert.False(string.IsNullOrWhiteSpace(scriptPath));
+        var blazorScript = await client.GetAsync(scriptPath);
+        Assert.Equal(HttpStatusCode.OK, blazorScript.StatusCode);
     }
 
     [Fact]
@@ -104,7 +108,15 @@ public sealed class CatalogApiTests : IDisposable
     public async Task FirstAccountBecomesAdministratorAndProtectsSettingsApi()
     {
         using var client = CreateClient();
+        var initialStatus = await client.GetFromJsonAsync<UserStatusResponse>("/api/users/status");
+        Assert.NotNull(initialStatus);
+        Assert.False(initialStatus.Enabled);
+        Assert.False(initialStatus.Authenticated);
+        Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/configuration")).StatusCode);
         Assert.Equal(HttpStatusCode.OK, (await client.GetAsync("/api/configuration/credentials")).StatusCode);
+        var mediaSettings = await client.GetFromJsonAsync<MediaSettingsStatusResponse>("/api/configuration/media");
+        Assert.NotNull(mediaSettings);
+        Assert.Equal(Path.GetFullPath(Path.Combine(contentRoot, "shared-media")), mediaSettings.CacheRoot);
 
         var created = await client.PostAsJsonAsync("/api/users", new { userName = "owner", password = "correct-horse-battery" });
         Assert.Equal(HttpStatusCode.OK, created.StatusCode);
@@ -122,10 +134,31 @@ public sealed class CatalogApiTests : IDisposable
         Assert.DoesNotContain("PasswordHash", userList);
 
         using var anonymous = CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync("/configuration")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/configuration/credentials")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/configuration/media")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/torrent-catalogs")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.GetAsync("/api/users")).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.PostAsJsonAsync("/api/users", new { userName = "intruder", password = "correct-horse-battery" })).StatusCode);
+    }
+
+    [Fact]
+    public async Task AdministratorCanDeleteUsersAndLastAccountCanReturnToAnonymousSetup()
+    {
+        using var admin = CreateClient();
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/api/users", new { userName = "owner", password = "correct-horse-battery" })).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.PostAsJsonAsync("/api/users", new { userName = "guest", password = "another-correct-password" })).StatusCode);
+
+        using var anonymous = CreateClient();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await anonymous.DeleteAsync("/api/users/guest")).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await admin.DeleteAsync("/api/users/owner")).StatusCode);
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/api/users/guest")).StatusCode);
+
+        Assert.Equal(HttpStatusCode.NoContent, (await admin.DeleteAsync("/api/users/owner")).StatusCode);
+        var status = await anonymous.GetFromJsonAsync<UserStatusResponse>("/api/users/status");
+        Assert.NotNull(status);
+        Assert.False(status.Enabled);
+        Assert.Equal(HttpStatusCode.OK, (await anonymous.GetAsync("/api/configuration/credentials")).StatusCode);
     }
 
     [Fact]
@@ -259,6 +292,7 @@ public sealed class CatalogApiTests : IDisposable
                 .ConfigureAppConfiguration(config => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["TMDB:ReadAccessToken"] = string.Empty,
+                ["Media:Root"] = Path.Combine(root, "shared-media"),
                 ["IndexerDefinitions:Enabled"] = "false"
             }))
                 .ConfigureTestServices(services => services.RemoveAll<IHostedService>());
@@ -268,6 +302,7 @@ public sealed class CatalogApiTests : IDisposable
     private sealed record TmdbStatus(bool Configured, object[] Results);
     private sealed record UserStatusResponse(bool Enabled, bool Authenticated, bool Administrator, string? UserName);
     private sealed record StreamingSettingsResponse(string CountryCode, bool NetflixEnabled, bool PrimeVideoEnabled);
+    private sealed record MediaSettingsStatusResponse(string CacheRoot, string ActiveCacheRoot);
     private sealed record WatchProgressEntry(int TmdbId, string MediaType, string Title, double CurrentTimeSeconds,
         double DurationSeconds, double ProgressPercent, DateTimeOffset UpdatedAt, string? PosterUrl = null,
         int? SeasonNumber = null, int? EpisodeNumber = null, bool IsCompleted = false, string? LibraryPath = null);

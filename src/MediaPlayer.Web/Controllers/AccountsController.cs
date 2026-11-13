@@ -43,6 +43,20 @@ public sealed class AccountsController(UserAccountStore users) : ControllerBase
         catch (InvalidOperationException ex) { return Conflict(new { error = ex.Message }); }
     }
 
+    [HttpDelete("{username}")]
+    [Authorize(Policy = "AdminWhenMultiUserEnabled")]
+    public async Task<IActionResult> Delete(string username, CancellationToken ct)
+    {
+        if (!User.IsInRole("Administrator")) return Forbid();
+        var isSelf = string.Equals(User.Identity?.Name, username, StringComparison.OrdinalIgnoreCase);
+        var existing = await users.GetAllAsync(ct);
+        if (isSelf && existing.Count != 1)
+            return Conflict(new { error = "Un administrateur ne peut supprimer son compte que s’il s’agit du dernier utilisateur." });
+        if (!await users.DeleteAsync(username, ct)) return NotFound();
+        if (isSelf) await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        return NoContent();
+    }
+
     [HttpPost("login")]
     public async Task<IActionResult> Login(LoginInput input, CancellationToken ct)
     {

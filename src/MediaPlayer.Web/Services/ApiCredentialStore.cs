@@ -9,16 +9,16 @@ public sealed class ApiCredentialStore(IConfiguration configuration, IWebHostEnv
     private readonly IDataProtector protector = protection.CreateProtector("MediaPlayer.ApiCredentials.v1");
     private readonly string path = Path.Combine(environment.ContentRootPath, "App_Data", "api-credentials.json");
 
-    public string? TmdbToken => External("TMDB:ReadAccessToken", "TMDB_READ_ACCESS_TOKEN") ?? ReadLocal()?.TmdbToken;
-    public string? OpenSubtitlesKey => External("OpenSubtitles:ApiKey", "OPENSUBTITLES_API_KEY") ?? ReadLocal()?.OpenSubtitlesKey;
+    public string? TmdbToken => configuration["TMDB:ReadAccessToken"] ?? ReadLocal()?.TmdbToken;
+    public string? OpenSubtitlesKey => configuration["OpenSubtitles:ApiKey"] ?? ReadLocal()?.OpenSubtitlesKey;
     public bool IsFullyConfigured => !string.IsNullOrWhiteSpace(TmdbToken) && !string.IsNullOrWhiteSpace(OpenSubtitlesKey);
 
     public object GetStatus() => new
     {
         tmdbConfigured = !string.IsNullOrWhiteSpace(TmdbToken),
-        tmdbSource = Source("TMDB:ReadAccessToken", "TMDB_READ_ACCESS_TOKEN", ReadLocal()?.TmdbToken),
+        tmdbSource = Source("TMDB:ReadAccessToken", ReadLocal()?.TmdbToken),
         openSubtitlesConfigured = !string.IsNullOrWhiteSpace(OpenSubtitlesKey),
-        openSubtitlesSource = Source("OpenSubtitles:ApiKey", "OPENSUBTITLES_API_KEY", ReadLocal()?.OpenSubtitlesKey),
+        openSubtitlesSource = Source("OpenSubtitles:ApiKey", ReadLocal()?.OpenSubtitlesKey),
         allConfigured = IsFullyConfigured
     };
 
@@ -36,9 +36,7 @@ public sealed class ApiCredentialStore(IConfiguration configuration, IWebHostEnv
         File.Move(path + ".tmp", path, true);
     }
 
-    private string? External(string configKey, string envKey) => configuration[configKey] ?? Environment.GetEnvironmentVariable(envKey);
-    private string Source(string configKey, string envKey, string? local) => !string.IsNullOrWhiteSpace(configuration[configKey]) ? "secret" :
-        !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(envKey)) ? "environment" :
+    private string Source(string configKey, string? local) => !string.IsNullOrWhiteSpace(configuration[configKey]) ? "secret" :
         !string.IsNullOrWhiteSpace(local) ? "local" : "missing";
     private StoredCredentials? ReadLocal()
     {

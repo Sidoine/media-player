@@ -50,4 +50,19 @@ public sealed class UserAccountStore(IDbContextFactory<UserDbContext> contexts)
         var user = await FindAsync(username, ct);
         return user is not null && hasher.VerifyHashedPassword(user, user.PasswordHash, password) != PasswordVerificationResult.Failed;
     }
+
+    public async Task<bool> DeleteAsync(string username, CancellationToken ct = default)
+    {
+        await gate.WaitAsync(ct);
+        try
+        {
+            await using var db = await contexts.CreateDbContextAsync(ct);
+            var user = await db.Users.FirstOrDefaultAsync(account => account.UserName == username, ct);
+            if (user is null) return false;
+            db.Users.Remove(user);
+            await db.SaveChangesAsync(ct);
+            return true;
+        }
+        finally { gate.Release(); }
+    }
 }

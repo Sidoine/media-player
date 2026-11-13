@@ -92,7 +92,7 @@
   <data name="Library_AddWatchlistHint" xml:space="preserve"><value>Add a movie or episode when no source is available.</value></data>
   <data name="Library_Loading" xml:space="preserve"><value>Loading your library…</value></data>
   <data name="Library_NoMedia" xml:space="preserve"><value>No media found</value></data>
-  <data name="Library_ConfigureMediaRoot" xml:space="preserve"><value>Set MEDIA_ROOT to browse your authorized local video files.</value></data>
+  <data name="Library_ConfigureMediaRoot" xml:space="preserve"><value>Set Media__Root to browse your authorized local video files.</value></data>
   <data name="Details_Episodes" xml:space="preserve"><value>Episodes</value></data>
   <data name="Details_EpisodeGuide" xml:space="preserve"><value>EPISODE GUIDE</value></data>
   <data name="Details_Watched" xml:space="preserve"><value>Watched</value></data>

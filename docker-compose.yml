@@ -4,10 +4,9 @@ services:
     container_name: media-player
     environment:
       ASPNETCORE_URLS: http://+:8080
-      TMDB_READ_ACCESS_TOKEN: ${TMDB_READ_ACCESS_TOKEN:-}
-      MEDIA_ROOT: /media
+      Media__Root: /media
     volumes:
-      - ./data/media:/media:ro
+      - ./data/media:/media
       - ./config/media-player:/app/App_Data
     ports:
       - "8080:8080"

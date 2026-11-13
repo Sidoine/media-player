@@ -62,7 +62,7 @@ public sealed class MediaStorageSettingsStore(IWebHostEnvironment environment, I
         }
         catch (Exception ex) when (ex is IOException or JsonException or ArgumentException or NotSupportedException) { }
 
-        var configuredRoot = configuration["Media:CacheRoot"];
+        var configuredRoot = configuration["Media:Root"];
         var root = string.IsNullOrWhiteSpace(configuredRoot)
             ? Path.Combine(environment.ContentRootPath, "App_Data", "media-cache")
             : Path.GetFullPath(Path.IsPathRooted(configuredRoot) ? configuredRoot : Path.Combine(environment.ContentRootPath, configuredRoot));

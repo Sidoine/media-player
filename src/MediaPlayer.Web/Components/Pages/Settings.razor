@@ -73,7 +73,9 @@ else
                     <ul>
                         @foreach (var user in _users)
                         {
-                            <li><strong>@user.UserName</strong><span>@(user.Role == "Administrator" ? "Administrateur" : "Utilisateur")</span></li>
+                            <li><strong>@user.UserName</strong><span>@(user.Role == "Administrator" ? "Administrateur" : "Utilisateur")</span>
+                                <AppButton Variant="glass" Class="compact" OnClick="() => DeleteUserAsync(user.UserName)">Supprimer</AppButton>
+                            </li>
                         }
                     </ul>
                 }
@@ -109,7 +111,7 @@ else
     </PanelCard>
     <PanelCard Id="media-storage" Title="@L["Settings_Storage"]" Description="@L["Settings_StorageDescription"]">
         <div class="source-form settings-source-form">
-            <FormTextField TValue="string" Label="@L["Settings_StorageFolder"]" @bind-Value="MediaCacheRootInput" @bind-Value:after="SaveMediaSettingsAsync" Placeholder="F:\\Media" Required="true" />
+            <FormTextField TValue="string" Label="@L["Settings_StorageFolder"]" @bind-Value="MediaCacheRootInput" @bind-Value:after="SaveMediaSettingsAsync" Placeholder="/app/App_Data/media-cache" Required="true" />
             <FormTextField TValue="decimal" Label="@L["Settings_QuotaGb"]" @bind-Value="CacheQuotaGbInput" @bind-Value:after="SaveMediaSettingsAsync" Type="number" Min="0.1" Max="10240" Step="0.1" Required="true" />
         </div>
         @if (MediaSettingsStatus is not null)
@@ -241,6 +243,7 @@ else
     private bool _userStatusCheckFailed;
     private bool _usersEnabled;
     private bool _isAdministrator;
+    private string? _currentUserName;
     private string NewUserName = "";
     private string NewUserPassword = "";
     private string? UserMessage;
@@ -350,6 +353,7 @@ else
             var status = await Http.GetFromJsonAsync<UserStatusResponse>("/api/users/status");
             _usersEnabled = status?.Enabled ?? false;
             _isAdministrator = status?.Administrator ?? false;
+            _currentUserName = status?.UserName;
             if (status is null) return;
             _userStatusLoaded = true;
             if (!_usersEnabled || _isAdministrator)
@@ -367,6 +371,30 @@ else
             return;
         }
         Navigation.NavigateTo("/configuration", true);
+    }
+
+    private async Task DeleteUserAsync(string username)
+    {
+        UserMessage = null;
+        try
+        {
+            var response = await Http.DeleteAsync($"/api/users/{Uri.EscapeDataString(username)}");
+            if (!response.IsSuccessStatusCode)
+            {
+                UserMessage = response.StatusCode == System.Net.HttpStatusCode.Conflict
+                    ? "Un administrateur ne peut pas supprimer son propre compte."
+                    : "Impossible de supprimer cet utilisateur.";
+                return;
+            }
+            _users.RemoveAll(user => string.Equals(user.UserName, username, StringComparison.OrdinalIgnoreCase));
+            if (string.Equals(username, _currentUserName, StringComparison.OrdinalIgnoreCase))
+            {
+                Navigation.NavigateTo("/configuration", true);
+                return;
+            }
+            StateHasChanged();
+        }
+        catch (HttpRequestException) { UserMessage = "Impossible de joindre le serveur pour supprimer cet utilisateur."; }
     }
 
     private void OpenIndexerModal(string type)
@@ -670,7 +698,7 @@ else
     private sealed record SearchResponse(List<TorrentItem> Results, List<string> Errors);
     private sealed record ErrorResponse(string Error);
     private sealed record UserPostResponse(bool Ok, int Status, string? Error);
-    private sealed record UserStatusResponse(bool Enabled, bool Authenticated, bool Administrator);
+    private sealed record UserStatusResponse(bool Enabled, bool Authenticated, bool Administrator, string? UserName);
     private sealed record UserItem(string UserName, string Role);
     private sealed record IndexerDefinitionCacheStatus(bool Available, int DefinitionCount, DateTimeOffset? FetchedAtUtc, string? ArchiveSha256, string SourceUrl, string? DefinitionVersion);
     private sealed record DefinitionItem(string Id, string Name, string? Description, string? Language, string? AccessType, string? Homepage);

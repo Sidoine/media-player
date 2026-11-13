@@ -52,9 +52,9 @@ Les tests Playwright ont leurs propres instructions dans `tests/MediaPlayer.Play
 
 ## Configuration et données locales
 
-- TMDB : variable `TMDB_READ_ACCESS_TOKEN` ou secret .NET `TMDB:ReadAccessToken`.
-- OpenSubtitles : variable `OPENSUBTITLES_API_KEY` ou secret .NET `OpenSubtitles:ApiKey`.
-- Médias locaux : variable `MEDIA_ROOT`.
+- TMDB : variable `TMDB__ReadAccessToken` ou secret .NET `TMDB:ReadAccessToken`.
+- OpenSubtitles : variable `OpenSubtitles__ApiKey` ou secret .NET `OpenSubtitles:ApiKey`.
+- Médias locaux et téléchargements : variable `Media__Root`.
 - Les clés API et paramètres locaux sont stockés sous `App_Data`; ne pas ajouter de secrets ni de données utilisateur au dépôt.
 - Docker Compose expose le serveur sur le port 8080 et persiste les réglages dans `./config/media-player`.
 

@@ -23,9 +23,9 @@ module.exports = defineConfig({
     env: {
       ASPNETCORE_ENVIRONMENT: 'Development',
       Playwright__Enabled: 'true',
-      TMDB_READ_ACCESS_TOKEN: 'playwright-test-token',
-      OPENSUBTITLES_API_KEY: 'playwright-test-key',
-      Media__CacheRoot: path.resolve(__dirname, '.cache'),
+      TMDB__ReadAccessToken: 'playwright-test-token',
+      OpenSubtitles__ApiKey: 'playwright-test-key',
+      Media__Root: path.resolve(__dirname, '.cache'),
       Playwright__HeroRotationMilliseconds: '600',
     },
   },
