@@ -1,15 +1,7 @@
-@inject media_player.Services.ApiCredentialStore Credentials
 <Router AppAssembly="typeof(Program).Assembly">
     <Found Context="routeData">
-        @if (!Credentials.IsFullyConfigured && routeData.PageType != typeof(media_player.Components.Pages.Settings))
-        {
-            <CredentialRedirect />
-        }
-        else
-        {
-            <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
-            <FocusOnNavigate RouteData="routeData" Selector="h1" />
-        }
+        <RouteView RouteData="routeData" DefaultLayout="typeof(Layout.MainLayout)" />
+        <FocusOnNavigate RouteData="routeData" Selector="h1" />
     </Found>
     <NotFound>
         <PageTitle>@L["Common_NotFoundTitle"] · Bobine</PageTitle>

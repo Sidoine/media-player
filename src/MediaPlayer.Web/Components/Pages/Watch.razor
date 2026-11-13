@@ -7,6 +7,7 @@
 @inject IJSRuntime JS
 @inject NavigationManager Navigation
 @inject WatchProgressStore ProgressStore
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthStateProvider
 @inject media_player.Services.MediaStorageSettingsStore MediaSettings
 
 <PageTitle>@(MediaTitle ?? Download?.Title ?? "Lecture") · Bobine</PageTitle>
@@ -126,6 +127,12 @@
 </div>
 
 @code {
+    private async Task<string?> CurrentUserNameAsync()
+    {
+        var state = await AuthStateProvider.GetAuthenticationStateAsync();
+        return state.User.Identity?.IsAuthenticated == true ? state.User.Identity.Name : null;
+    }
+
     [Parameter] public string MediaType { get; set; } = "movie";
     [Parameter] public int TmdbId { get; set; }
     [Parameter] public string? LibraryPath { get; set; }
@@ -250,7 +257,7 @@
                 await LoadPosterAsync();
                 MediaTitle = Media?.Title ?? "Série";
                 if (ResumePosition is null)
-                    ResumePosition = await ProgressStore.GetPositionAsync(TmdbId, "tv", SeasonNumber, EpisodeNumber);
+                    ResumePosition = await ProgressStore.GetPositionAsync(TmdbId, "tv", SeasonNumber, EpisodeNumber, await CurrentUserNameAsync());
             }
             else MediaTitle = Download?.Title;
             if (Download?.CanStream == true) PreparePlayback();
@@ -550,7 +557,8 @@
     [JSInvokable]
     public async Task SavePlaybackProgress(double currentTime, double duration)
     {
-        await ProgressStore.SaveAsync(TmdbId, MediaType, DisplayTitle, currentTime, duration, Media?.Poster, SeasonNumber, EpisodeNumber);
+        await ProgressStore.SaveAsync(TmdbId, MediaType, DisplayTitle, currentTime, duration, Media?.Poster, SeasonNumber, EpisodeNumber,
+            userName: await CurrentUserNameAsync());
         if (MediaType != "tv" || SeasonNumber is null || EpisodeNumber is null || duration <= 0
             || currentTime / duration < .5 || NextEpisodeScheduled || DateTimeOffset.UtcNow < NextEpisodeRetryAfter) return;
         NextEpisodeScheduled = true;

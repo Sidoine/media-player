@@ -6,6 +6,16 @@
 @inject IJSRuntime JS
 <PageTitle>@L["Settings_Title"] · Bobine</PageTitle>
 
+@if (!_userStatusLoaded)
+{
+    <section class="settings-page"><p class="inline-message">@(_userStatusCheckFailed ? "Impossible de vérifier les droits d’accès." : "Vérification des droits d’accès…")</p></section>
+}
+else if (_usersEnabled && !_isAdministrator)
+{
+    <section class="settings-page"><p class="inline-message">Redirection vers le catalogue…</p></section>
+}
+else
+{
 <Toast Message="@ToastMessage" Variant="@ToastVariant" Trigger="@ToastTrigger" OnDismiss="ClearToast" />
 
 <div class="settings-page">
@@ -15,6 +25,8 @@
     <div class="settings-layout">
     <nav class="settings-nav" aria-label="@L["Settings_Sections"]">
         <button type="button" data-section="dashboard">@L["Settings_Dashboard"]</button>
+        <button type="button" data-section="users">Utilisateurs</button>
+        <button type="button" data-section="streaming-services">Services externes</button>
         <button type="button" data-section="language-preference">@L["Settings_Language"]</button>
         <button type="button" data-section="media-storage">@L["Settings_Storage"]</button>
         <button type="button" data-section="playback-preferences">@L["Settings_PlaybackPreferences"]</button>
@@ -46,6 +58,47 @@
                 <span data-server-restart-status aria-live="polite"></span>
             </div>
         }
+    </PanelCard>
+    <PanelCard Id="users" Title="Utilisateurs" Description="Créez un compte pour activer le mode multiutilisateur.">
+        @if (!_usersEnabled || _isAdministrator)
+        {
+            <div class="user-list" aria-live="polite">
+                <h3>Comptes existants</h3>
+                @if (_users.Count == 0)
+                {
+                    <p>Aucun utilisateur pour le moment.</p>
+                }
+                else
+                {
+                    <ul>
+                        @foreach (var user in _users)
+                        {
+                            <li><strong>@user.UserName</strong><span>@(user.Role == "Administrator" ? "Administrateur" : "Utilisateur")</span></li>
+                        }
+                    </ul>
+                }
+            </div>
+            <form class="source-form settings-source-form" @onsubmit="CreateUserAsync" @onsubmit:preventDefault>
+                <FormTextField TValue="string" Label="Nom d’utilisateur" @bind-Value="NewUserName" Required="true" MaxLength="64" />
+                <FormTextField TValue="string" Label="Mot de passe (10 caractères minimum)" @bind-Value="NewUserPassword" Type="password" AutoComplete="new-password" Required="true" />
+                <AppButton Variant="light" Type="submit">@(_usersEnabled ? "Créer un utilisateur" : "Créer le premier administrateur")</AppButton>
+            </form>
+        }
+        else { <p>Le mode multiutilisateur est actif. Connectez-vous avec un compte administrateur pour gérer les réglages.</p> }
+        @if (!string.IsNullOrEmpty(UserMessage)) { <p class="inline-message">@UserMessage</p> }
+    </PanelCard>
+    <PanelCard Id="streaming-services" Title="Services externes" Description="Affichez les services de streaming disponibles selon un même pays de référence.">
+        <div class="external-services-settings">
+            <label><input type="checkbox" @bind="NetflixEnabledInput" /> Netflix</label>
+            <label><input type="checkbox" @bind="PrimeVideoEnabledInput" /> Prime Video</label>
+            <label class="external-country">Pays de référence
+                <select @bind="StreamingCountryInput">
+                    @foreach (var country in ExternalStreamingSettingsStore.Countries) { <option value="@country.Code">@country.Name (@country.Code)</option> }
+                </select>
+            </label>
+            <AppButton Variant="light" OnClick="SaveStreamingSettingsAsync" Disabled="@StreamingSettingsBusy">@(StreamingSettingsBusy ? "Enregistrement…" : "Enregistrer")</AppButton>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(StreamingSettingsMessage)) { <p class="inline-message">@StreamingSettingsMessage</p> }
     </PanelCard>
     <PanelCard Id="language-preference" Class="language-panel" Title="@L["Settings_Language"]" Description="@L["Settings_LanguageDescription"]">
         <FormSelect TValue="string" Label="@L["Settings_Language"]" Value="@LanguagePreference" ValueChanged="ChangeLanguageAsync">
@@ -93,6 +146,12 @@
                 <span class="settings-info-tooltip"><button type="button" aria-label="@L["Settings_UpnpTooltip"]" aria-describedby="upnp-tooltip">ⓘ</button><span id="upnp-tooltip" role="tooltip">@L["Settings_UpnpTooltip"]</span></span>
             </FormCheckbox>
         </div>
+        @if (_usersEnabled)
+        {
+            <div class="anonymous-torrent-setting">
+                <FormCheckbox Class="rights-check" Label="Autoriser les utilisateurs anonymes à initier des suivis et des téléchargements BitTorrent" @bind-Value="AllowAnonymousTorrentActions" @bind-Value:after="SaveMediaSettingsAsync" />
+            </div>
+        }
         <div class="sharing-trackers">
             <div class="sharing-trackers-heading"><h3>@L["Settings_Trackers"]</h3><span class="source-count">@string.Format(L["Settings_ConfiguredTrackers"], TrackerUrlsText.Split('\n', StringSplitOptions.RemoveEmptyEntries).Length)</span></div>
             <p>@L["Settings_TrackersDescription"]</p>
@@ -174,9 +233,18 @@
     </div>
     </div>
 </div>
+}
 
 @code {
     private bool _settingsNavigationInitialized;
+    private bool _userStatusLoaded;
+    private bool _userStatusCheckFailed;
+    private bool _usersEnabled;
+    private bool _isAdministrator;
+    private string NewUserName = "";
+    private string NewUserPassword = "";
+    private string? UserMessage;
+    private List<UserItem> _users = [];
     private string LanguagePreference = "auto";
     private string? IndexerModalType;
 
@@ -198,8 +266,14 @@
     private string MediaCacheRootInput = "";
     private decimal CacheQuotaGbInput = 500;
     private int PreferredResolutionInput = 1080;
+    private bool NetflixEnabledInput = true;
+    private bool PrimeVideoEnabledInput = true;
+    private string StreamingCountryInput = "FR";
+    private bool StreamingSettingsBusy;
+    private string? StreamingSettingsMessage;
     private string SubtitleLanguagePreference = "auto";
     private bool EnableUpnpInput;
+    private bool AllowAnonymousTorrentActions = true;
     private decimal ShareRatioInput = 1;
     private bool ShareWithoutLimit;
     private bool IsRestartingServer;
@@ -259,8 +333,40 @@
 
     private async Task LoadAndRenderAsync()
     {
-        await Task.WhenAll(LoadSourcesAsync(), LoadCacheStatusAsync(), LoadSelectedIndexersAsync(), LoadDefinitionsAsync(), LoadTrackersAsync(), LoadCredentialStatusAsync(), LoadPopularityStatusAsync(), LoadMediaSettingsAsync());
+        await LoadUserStatusAsync();
+        if (_usersEnabled && !_isAdministrator)
+        {
+            Navigation.NavigateTo("/connexion", true);
+            return;
+        }
+        await Task.WhenAll(LoadSourcesAsync(), LoadCacheStatusAsync(), LoadSelectedIndexersAsync(), LoadDefinitionsAsync(), LoadTrackersAsync(), LoadCredentialStatusAsync(), LoadPopularityStatusAsync(), LoadMediaSettingsAsync(), LoadStreamingSettingsAsync());
         StateHasChanged();
+    }
+
+    private async Task LoadUserStatusAsync()
+    {
+        try
+        {
+            var status = await Http.GetFromJsonAsync<UserStatusResponse>("/api/users/status");
+            _usersEnabled = status?.Enabled ?? false;
+            _isAdministrator = status?.Administrator ?? false;
+            if (status is null) return;
+            _userStatusLoaded = true;
+            if (!_usersEnabled || _isAdministrator)
+                _users = await Http.GetFromJsonAsync<List<UserItem>>("/api/users") ?? [];
+        }
+        catch (Exception) { _userStatusCheckFailed = true; }
+    }
+
+    private async Task CreateUserAsync()
+    {
+        var response = await JS.InvokeAsync<UserPostResponse>("mediaAuth.postJson", "/api/users", new { userName = NewUserName, password = NewUserPassword });
+        if (!response.Ok)
+        {
+            UserMessage = response.Error ?? "Impossible de créer l’utilisateur. Seul un administrateur peut ajouter des comptes.";
+            return;
+        }
+        Navigation.NavigateTo("/configuration", true);
     }
 
     private void OpenIndexerModal(string type)
@@ -291,17 +397,43 @@
             PreferredResolutionInput = MediaSettingsStatus.PreferredResolution;
             SubtitleLanguagePreference = MediaSettingsStatus.SubtitleLanguage;
             EnableUpnpInput = MediaSettingsStatus.EnableUpnp;
+            AllowAnonymousTorrentActions = MediaSettingsStatus.AllowAnonymousTorrentActions;
             ShareWithoutLimit = MediaSettingsStatus.ShareRatioLimit is null;
             ShareRatioInput = (decimal)(MediaSettingsStatus.ShareRatioLimit ?? 1);
         }
         catch (HttpRequestException) { ShowToast("Impossible de lire les réglages de stockage et de partage.", "error"); }
     }
 
+    private async Task LoadStreamingSettingsAsync()
+    {
+        try
+        {
+            var value = await Http.GetFromJsonAsync<StreamingSettingsResponse>("/api/streaming/settings");
+            if (value is null) return;
+            NetflixEnabledInput = value.NetflixEnabled;
+            PrimeVideoEnabledInput = value.PrimeVideoEnabled;
+            StreamingCountryInput = value.CountryCode;
+        }
+        catch (HttpRequestException) { StreamingSettingsMessage = "Impossible de lire les réglages des services externes."; }
+    }
+
+    private async Task SaveStreamingSettingsAsync()
+    {
+        StreamingSettingsBusy = true;
+        try
+        {
+            var response = await Http.PutAsJsonAsync("/api/streaming/settings", new { countryCode = StreamingCountryInput, netflixEnabled = NetflixEnabledInput, primeVideoEnabled = PrimeVideoEnabledInput });
+            StreamingSettingsMessage = response.IsSuccessStatusCode ? "Préférences enregistrées." : "Impossible d’enregistrer les préférences.";
+        }
+        catch (HttpRequestException) { StreamingSettingsMessage = "Impossible d’enregistrer les préférences."; }
+        finally { StreamingSettingsBusy = false; }
+    }
+
     private async Task SaveMediaSettingsAsync()
     {
         try
         {
-            var body = new { cacheRoot = MediaCacheRootInput, cacheMaxBytes = (long)(CacheQuotaGbInput * 1024 * 1024 * 1024), shareRatioLimit = ShareWithoutLimit ? (double?)null : (double)ShareRatioInput, preferredResolution = PreferredResolutionInput, enableUpnp = EnableUpnpInput, subtitleLanguage = SubtitleLanguagePreference };
+            var body = new { cacheRoot = MediaCacheRootInput, cacheMaxBytes = (long)(CacheQuotaGbInput * 1024 * 1024 * 1024), shareRatioLimit = ShareWithoutLimit ? (double?)null : (double)ShareRatioInput, preferredResolution = PreferredResolutionInput, enableUpnp = EnableUpnpInput, subtitleLanguage = SubtitleLanguagePreference, allowAnonymousTorrentActions = AllowAnonymousTorrentActions };
             var response = await Http.PutAsJsonAsync("/api/configuration/media", body);
             if (!response.IsSuccessStatusCode)
             {
@@ -537,13 +669,17 @@
     }
     private sealed record SearchResponse(List<TorrentItem> Results, List<string> Errors);
     private sealed record ErrorResponse(string Error);
+    private sealed record UserPostResponse(bool Ok, int Status, string? Error);
+    private sealed record UserStatusResponse(bool Enabled, bool Authenticated, bool Administrator);
+    private sealed record UserItem(string UserName, string Role);
     private sealed record IndexerDefinitionCacheStatus(bool Available, int DefinitionCount, DateTimeOffset? FetchedAtUtc, string? ArchiveSha256, string SourceUrl, string? DefinitionVersion);
     private sealed record DefinitionItem(string Id, string Name, string? Description, string? Language, string? AccessType, string? Homepage);
     private sealed record SelectedIndexerItem(Guid Id, string DefinitionId, string Name, bool RightsConfirmed, DateTimeOffset AddedAt);
     private sealed record TrackerListResponse(List<string> Urls);
     private sealed record CredentialStatusResponse(bool TmdbConfigured, string TmdbSource, bool OpenSubtitlesConfigured, string OpenSubtitlesSource, bool AllConfigured);
+    private sealed record StreamingSettingsResponse(string CountryCode, bool NetflixEnabled, bool PrimeVideoEnabled);
     private sealed record MediaSettingsResponse(string CacheRoot, string ActiveCacheRoot, long CacheMaxBytes, long UsedBytes,
-        double? ShareRatioLimit, int PreferredResolution, bool EnableUpnp, bool ActiveEnableUpnp, bool RequiresRestart,
+        double? ShareRatioLimit, int PreferredResolution, bool EnableUpnp, bool ActiveEnableUpnp, bool AllowAnonymousTorrentActions, bool RequiresRestart,
         PortForwardingResponse? PortForwarding, string SubtitleLanguage = "auto", string ResolvedSubtitleLanguage = "en");
     private sealed record PortForwardingResponse(bool Enabled, List<PortMappingResponse> Created,
         List<PortMappingResponse> Pending, List<PortMappingResponse> Failed);

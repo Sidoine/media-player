@@ -1,0 +1,25 @@
+@page "/connexion"
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+<PageTitle>Connexion · Bobine</PageTitle>
+<section class="settings-page"><div class="settings-title"><h1>Connexion</h1><p>Connectez-vous pour accéder aux réglages administrateur.</p></div>
+<PanelCard Title="Connexion">
+    <form class="source-form settings-source-form" @onsubmit="LoginAsync" @onsubmit:preventDefault>
+        <FormTextField TValue="string" Label="Utilisateur" @bind-Value="UserName" Required="true" />
+        <FormTextField TValue="string" Label="Mot de passe" @bind-Value="Password" Type="password" AutoComplete="current-password" Required="true" />
+        <AppButton Variant="light" Type="submit">Se connecter</AppButton>
+    </form>
+    @if (!string.IsNullOrEmpty(Message)) { <p class="inline-message">@Message</p> }
+</PanelCard></section>
+@code {
+    private string UserName = "";
+    private string Password = "";
+    private string? Message;
+    private async Task LoginAsync()
+    {
+        var response = await JS.InvokeAsync<AuthResponse>("mediaAuth.postJson", "/api/users/login", new { userName = UserName, password = Password });
+        if (!response.Ok) { Message = "Nom d’utilisateur ou mot de passe incorrect."; return; }
+        Navigation.NavigateTo("/configuration", true);
+    }
+    private sealed record AuthResponse(bool Ok, int Status, string? Error);
+}

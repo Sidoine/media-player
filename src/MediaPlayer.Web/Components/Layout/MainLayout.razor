@@ -1,4 +1,5 @@
 @inherits LayoutComponentBase
+@inject HttpClient Http
 <div class="shell">
     <header class="topbar">
         <a class="wordmark" href="/" aria-label="Bobine, @L["Nav_Home"]">
@@ -12,8 +13,48 @@
             <a href="/bibliotheque">@L["Nav_Library"]</a>
         </nav>
         <CatalogSearch />
-        <AppButton Variant="light" Class="profile" Href="/configuration" Title="@L["Nav_Settings"]" AriaLabel="@L["Nav_Settings"]">⚙</AppButton>
+        @if (_userStatusLoaded && _usersEnabled)
+        {
+            @if (_authenticated)
+            {
+                <a class="profile-initials" href="/compte" title="Compte de @_userName" aria-label="Ouvrir le compte de @_userName">@UserInitials</a>
+            }
+            else { <a class="icon-button" href="/connexion" title="Connexion" aria-label="Connexion">♙</a> }
+        }
+        @if (_userStatusLoaded && (_isAdministrator || !_usersEnabled)) { <AppButton Variant="light" Class="profile" Href="/configuration" Title="@L["Nav_Settings"]" AriaLabel="@L["Nav_Settings"]">⚙</AppButton> }
     </header>
     <main>@Body</main>
     <footer>ÉCRAN <span>@L["Footer_TmdbDisclaimer"]</span></footer>
 </div>
+@code {
+    private bool _usersEnabled;
+    private bool _isAdministrator;
+    private bool _authenticated;
+    private bool _userStatusLoaded;
+    private string? _userName;
+    private string UserInitials
+    {
+        get
+        {
+            var name = _userName?.Trim();
+            if (string.IsNullOrEmpty(name)) return "?";
+            var parts = name.Split([' ', '.', '-', '_'], StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length > 1) return string.Concat(parts.Take(2).Select(part => char.ToUpperInvariant(part[0])));
+            return string.Concat(name.Take(Math.Min(2, name.Length)).Select(char.ToUpperInvariant));
+        }
+    }
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            var status = await Http.GetFromJsonAsync<UserStatus>("/api/users/status");
+            _usersEnabled = status?.Enabled ?? false;
+            _isAdministrator = status?.Administrator ?? false;
+            _authenticated = status?.Authenticated ?? false;
+            _userName = status?.UserName;
+            _userStatusLoaded = status is not null;
+        }
+        catch (Exception) { }
+    }
+    private sealed record UserStatus(bool Enabled, bool Authenticated, bool Administrator, string? UserName);
+}

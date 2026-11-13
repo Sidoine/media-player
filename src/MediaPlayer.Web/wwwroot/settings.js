@@ -106,3 +106,21 @@ window.mediaLocalization = {
         window.location.reload();
     }
 };
+
+window.mediaAuth = {
+    async postJson(url, body) {
+        const response = await fetch(url, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body)
+        });
+        let payload = null;
+        try { payload = await response.json(); } catch { }
+        return { ok: response.ok, status: response.status, error: payload?.error ?? null };
+    },
+    async logout() {
+        const response = await fetch("/api/users/logout", { method: "POST", credentials: "same-origin" });
+        return response.ok;
+    }
+};

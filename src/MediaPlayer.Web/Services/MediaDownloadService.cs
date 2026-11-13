@@ -52,6 +52,7 @@ public sealed class MediaDownloadService(
     public async Task StopAsync(CancellationToken cancellationToken)
     {
         if (Interlocked.Exchange(ref stopped, 1) != 0) return;
+        if (monitorCancellation is null && engine is null) return;
         if (monitorCancellation is not null)
         {
             await monitorCancellation.CancelAsync();
@@ -610,8 +611,9 @@ public sealed class MediaDownloadService(
     {
         await StopAsync(CancellationToken.None);
         monitorCancellation?.Dispose();
-        gate.Dispose();
-        manifestGate.Dispose();
+        // The hosted-service registration and singleton registration share this instance.
+        // The host may invoke disposal through both descriptors while shutdown is in flight;
+        // keep these managed semaphores usable by a late StopAsync call.
     }
 }
 

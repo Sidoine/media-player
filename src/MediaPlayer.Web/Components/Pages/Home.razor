@@ -7,6 +7,7 @@
 @inject IConfiguration Configuration
 @inject NavigationManager Navigation
 @inject WatchProgressStore ProgressStore
+@inject Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthStateProvider
 @inject IJSRuntime JS
 <PageTitle>Bobine — @CatalogPageTitle</PageTitle>
 
@@ -134,7 +135,8 @@
                             @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
                             else { <div class="poster-placeholder">@item.Title</div> }
                             <span class="rating">★ @item.Rating.ToString("0.0")</span>
-                            @if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
+                            @if (GetStreamingProviders(item) is { Count: > 0 } providers) { <span class="streaming-provider-badges">@foreach (var provider in providers) { <img src="@provider.LogoUrl" alt="" title="Disponible sur @provider.Name" /> }</span> }
+                            else if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
                             <span class="poster-play">▶</span>
                         </div>
                         <span class="poster-title">@item.Title</span><span class="poster-type">@(item.MediaType == "tv" ? "Série" : "Film")</span>
@@ -159,7 +161,8 @@
                                 @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
                                 else { <div class="poster-placeholder">@item.Title</div> }
                                 <span class="rating">★ @item.Rating.ToString("0.0")</span>
-                                @if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
+                                @if (GetStreamingProviders(item) is { Count: > 0 } providers) { <span class="streaming-provider-badges">@foreach (var provider in providers) { <img src="@provider.LogoUrl" alt="" title="Disponible sur @provider.Name" /> }</span> }
+                                else if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
                                 <span class="poster-play">▶</span>
                             </div>
                             <span class="poster-title">@item.Title</span><span class="poster-type">@item.AvailableSources source(s) · @item.Seeders pairs</span>
@@ -186,7 +189,8 @@
                                 @if (!string.IsNullOrWhiteSpace(item.Poster)) { <img src="@item.Poster" alt="Affiche de @item.Title" loading="lazy" /> }
                                 else { <div class="poster-placeholder">@item.Title</div> }
                                 <span class="rating">★ @item.Rating.ToString("0.0")</span>
-                                @if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
+                            @if (GetStreamingProviders(item) is { Count: > 0 } providers) { <span class="streaming-provider-badges">@foreach (var provider in providers) { <img src="@provider.LogoUrl" alt="" title="Disponible sur @provider.Name" /> }</span> }
+                            else if (GetMediaBadge(item.Id, item.MediaType) is { } badge) { <span class="media-status-badge @badge.CssClass" role="img" aria-label="@badge.Label" title="@badge.Label"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="@badge.IconPath" /></svg></span> }
                                 <span class="poster-play">▶</span>
                             </div>
                             <span class="poster-title">@item.Title</span><span class="poster-type">@(item.MediaType == "tv" ? "Série" : "Film")</span>
@@ -207,6 +211,7 @@
 
 @code {
     private List<MediaItem> Movies = [];
+    private readonly Dictionary<string, List<StreamingProviderAvailability>> StreamingProviders = new(StringComparer.OrdinalIgnoreCase);
     private List<WatchProgressEntry> ContinueWatching = [];
     private readonly HashSet<string> UnavailablePosters = new(StringComparer.OrdinalIgnoreCase);
     private ElementReference WatchingCarousel;
@@ -307,6 +312,7 @@
         if (!hasLoadedLocalMediaState) { hasLoadedLocalMediaState = true; localLoads.Add(LoadLocalMediaStateAsync()); }
         if (localLoads.Count > 0) await Task.WhenAll(localLoads);
         await LoadMissingPostersAsync();
+        await LoadStreamingAvailabilityAsync();
         UpdateFeaturedForCurrentTab();
         if (!string.Equals(lastGenreScope, ActiveCatalog, StringComparison.Ordinal) || queryChanged)
         {
@@ -328,6 +334,7 @@
                 await LoadCatalogAsync(query);
             }
             UpdateFeaturedForCurrentTab();
+            await LoadStreamingAvailabilityAsync();
             if (!string.Equals(lastGenreScope, ActiveCatalog, StringComparison.Ordinal) || queryChanged)
             {
                 lastGenreScope = ActiveCatalog;
@@ -375,6 +382,8 @@
 
     private async Task LoadMissingPostersAsync()
     {
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        var userName = authState.User.Identity?.IsAuthenticated == true ? authState.User.Identity.Name : null;
         var resolved = ContinueWatching.Select(item => (Entry: item, Download: FindCachedDownload(item))).ToArray();
         var needsPoster = resolved.Where(item => string.IsNullOrWhiteSpace(item.Entry.PosterUrl)
             && (item.Download is not null || item.Entry.TmdbId > 0)).ToArray();
@@ -389,9 +398,9 @@
                 if (!string.IsNullOrWhiteSpace(details?.Poster))
                 {
                     if (!string.IsNullOrWhiteSpace(item.LibraryPath))
-                        await ProgressStore.SetLibraryPosterAsync(item.LibraryPath, details.Poster);
+                        await ProgressStore.SetLibraryPosterAsync(item.LibraryPath, details.Poster, userName: userName);
                     else
-                        await ProgressStore.SetPosterAsync(item.TmdbId, item.MediaType, details.Poster, item.SeasonNumber, item.EpisodeNumber);
+                        await ProgressStore.SetPosterAsync(item.TmdbId, item.MediaType, details.Poster, item.SeasonNumber, item.EpisodeNumber, userName: userName);
                     var index = ContinueWatching.FindIndex(entry => WatchProgressKey(entry) == WatchProgressKey(item));
                     if (index >= 0) ContinueWatching[index] = ContinueWatching[index] with { PosterUrl = details.Poster };
                 }
@@ -623,6 +632,36 @@
         return null;
     }
 
+    private List<StreamingProviderAvailability> GetStreamingProviders(MediaItem item) => StreamingProviders.GetValueOrDefault(LocalMediaKey(item.Id, item.MediaType ?? "movie")) ?? [];
+    private List<StreamingProviderAvailability> GetStreamingProviders(IndexerPopularItem item) => StreamingProviders.GetValueOrDefault(LocalMediaKey(item.Id, item.MediaType)) ?? [];
+
+    private async Task LoadStreamingAvailabilityAsync()
+    {
+        var media = VisibleMedia.Take(20).DistinctBy(item => LocalMediaKey(item.Id, item.MediaType ?? "movie")).ToArray();
+        using var limit = new SemaphoreSlim(5);
+        await Task.WhenAll(media.Select(async item =>
+        {
+            var key = LocalMediaKey(item.Id, item.MediaType ?? "movie");
+            if (StreamingProviders.ContainsKey(key)) return;
+            await limit.WaitAsync();
+            try
+            {
+                await FetchStreamingAvailabilityAsync(item, key);
+            }
+            finally { limit.Release(); }
+        }));
+    }
+
+    private async Task FetchStreamingAvailabilityAsync(MediaItem item, string key)
+    {
+        try
+        {
+            var url = $"/api/streaming/{Uri.EscapeDataString(item.MediaType ?? "movie")}/{item.Id}?title={Uri.EscapeDataString(item.Title)}";
+            StreamingProviders[key] = await Http.GetFromJsonAsync<List<StreamingProviderAvailability>>(url) ?? [];
+        }
+        catch (HttpRequestException) { StreamingProviders[key] = []; }
+    }
+
     private Task SelectIndexerPopular(IndexerPopularItem item) => SelectFeature(new MediaItem(item.Id, item.Title, item.Overview,
         item.Poster, item.Backdrop, item.MediaType, item.Rating, item.OriginalLanguage, item.Year, item.TmdbPopularity));
 
@@ -692,11 +731,17 @@
         });
     }
 
-    private Task SelectFeature(MediaItem item)
+    private async Task SelectFeature(MediaItem item)
     {
         var type = item.MediaType ?? "movie";
+        var key = LocalMediaKey(item.Id, type);
+        if (!StreamingProviders.ContainsKey(key)) await FetchStreamingAvailabilityAsync(item, key);
+        if (GetStreamingProviders(item).FirstOrDefault() is { } provider)
+        {
+            Navigation.NavigateTo(provider.SearchUrl, forceLoad: true);
+            return;
+        }
         Navigation.NavigateTo($"/lecture/{type}/{item.Id}");
-        return Task.CompletedTask;
     }
 
     private sealed record CatalogResponse(bool Configured, List<MediaItem> Results);
@@ -708,6 +753,7 @@
     private sealed record WatchPosterResponse(string? Poster);
     private sealed record LocalMediaStateResponse(List<MediaDownloadStatus> Downloads, List<MediaWatchlistEntry> Watchlist);
     private sealed record MediaBadge(string Label, string CssClass, string IconPath);
+    private sealed record StreamingProviderAvailability(string Name, string LogoUrl, string SearchUrl);
     private sealed record MediaItem(int Id, string Title, string? Overview, string? Poster, string? Backdrop, string? MediaType, double Rating, string? OriginalLanguage, int? Year, double Popularity = 0);
     private sealed record MediaDownloadStatus(int TmdbId, string MediaType, string Title, string OriginalLanguage, string State, double Progress,
         long DownloadRate, string Directory, bool Completed, string SourceTitle, int AvailablePeers, int TrackerCount, string DhtState,

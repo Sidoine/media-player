@@ -1,0 +1,64 @@
+@page "/compte"
+@inject HttpClient Http
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+<PageTitle>Compte · Bobine</PageTitle>
+
+@if (!_statusLoaded)
+{
+    <section class="settings-page"><p class="inline-message">@(_statusFailed ? "Impossible de vérifier la session." : "Chargement du compte…")</p></section>
+}
+else
+{
+    <section class="settings-page account-page">
+        <a class="back-link" href="/">← Retour au catalogue</a>
+        <div class="settings-title"><h1>Mon compte</h1><p>Informations de votre session MediaPlayer.</p></div>
+        <PanelCard Title="Compte">
+            <dl class="account-details">
+                <div><dt>Nom d’utilisateur</dt><dd>@_userName</dd></div>
+                <div><dt>Rôle</dt><dd>@(_isAdministrator ? "Administrateur" : "Utilisateur")</dd></div>
+            </dl>
+            <AppButton Variant="glass" OnClick="LogoutAsync" Disabled="@_isLoggingOut">@(_isLoggingOut ? "Déconnexion…" : "Se déconnecter")</AppButton>
+            @if (!string.IsNullOrWhiteSpace(_message)) { <p class="inline-message">@_message</p> }
+        </PanelCard>
+    </section>
+}
+
+@code {
+    private bool _statusLoaded;
+    private bool _statusFailed;
+    private bool _isAdministrator;
+    private bool _isLoggingOut;
+    private string? _userName;
+    private string? _message;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        try
+        {
+            var status = await Http.GetFromJsonAsync<UserStatus>("/api/users/status");
+            if (status?.Authenticated != true)
+            {
+                Navigation.NavigateTo("/connexion", true);
+                return;
+            }
+            _userName = status.UserName;
+            _isAdministrator = status.Administrator;
+            _statusLoaded = true;
+            StateHasChanged();
+        }
+        catch (Exception) { _statusFailed = true; StateHasChanged(); }
+    }
+
+    private async Task LogoutAsync()
+    {
+        _isLoggingOut = true;
+        var succeeded = await JS.InvokeAsync<bool>("mediaAuth.logout");
+        if (succeeded) Navigation.NavigateTo("/connexion", true);
+        _isLoggingOut = false;
+        _message = "La déconnexion a échoué. Réessayez.";
+    }
+
+    private sealed record UserStatus(bool Enabled, bool Authenticated, bool Administrator, string? UserName);
+}

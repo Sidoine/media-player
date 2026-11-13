@@ -47,11 +47,11 @@ else if (Details is not null)
                 <div class="media-info-actions">
                     @if (MediaType == "tv")
                     {
-                        <AppButton Variant="light" Disabled="@(NextEpisodeToPlay is null)" OnClick="PlayAsync">▶ <span>@PlayButtonLabel</span></AppButton>
+                        <AppButton Variant="light" Disabled="@(NextEpisodeToPlay is null && StreamingProviders.Count == 0)" OnClick="PlayAsync">@PlayButtonIcon <span>@PlayButtonLabel</span></AppButton>
                     }
                     else
                     {
-                        <AppButton Variant="light" OnClick="PlayAsync">▶ <span>@L["Home_Play"]</span></AppButton>
+                        <AppButton Variant="light" OnClick="PlayAsync">@PlayButtonIcon <span>@L["Home_Play"]</span></AppButton>
                     }
                     @if (!string.IsNullOrWhiteSpace(Details.TrailerUrl))
                     {
@@ -92,7 +92,7 @@ else if (Details is not null)
                                             <div class="episode-progress"><span style="width:@($"{progress.ProgressPercent:0.#}%")"></span></div>
                                             <small>@L["Details_InProgress"] · @progress.ProgressPercent.ToString("0") %</small>
                                         }
-                                        <AppButton Variant="light" Class="episode-play" OnClick="() => PlayEpisode(episode)">▶ <span>@L[progress is { IsCompleted: false } ? "Details_ResumeEpisode" : "Details_PlayEpisode"]</span></AppButton>
+                                        <AppButton Variant="light" Class="episode-play" OnClick="() => PlayEpisodeAsync(episode)">@PlayButtonIcon <span>@L[progress is { IsCompleted: false } ? "Details_ResumeEpisode" : "Details_PlayEpisode"]</span></AppButton>
                                     </div>
                                 </article>
                             }
@@ -131,13 +131,32 @@ else if (Details is not null)
     private int SelectedSeasonNumber;
     private Dictionary<int, List<EpisodeDetails>> EpisodesBySeason = [];
     private List<WatchProgressEntry> EpisodeProgress = [];
+    private List<StreamingProviderAvailability> StreamingProviders = [];
     private List<EpisodeDetails> SelectedEpisodes => EpisodesBySeason.GetValueOrDefault(SelectedSeasonNumber) ?? [];
     private IEnumerable<EpisodeDetails> AllEpisodes => EpisodesBySeason.Values.SelectMany(items => items).OrderBy(item => item.SeasonNumber).ThenBy(item => item.EpisodeNumber);
     private WatchProgressEntry? CurrentEpisodeProgress => EpisodeProgress.Where(item => !item.IsCompleted).OrderByDescending(item => item.UpdatedAt).FirstOrDefault();
     private bool HasEpisodeInProgress => CurrentEpisodeProgress is not null;
-    private string PlayButtonLabel => NextEpisodeToPlay is { } episode
+    private string PlayButtonLabel => StreamingProviders.FirstOrDefault() is { } provider
+        ? $"Regarder sur {provider.Name}"
+        : NextEpisodeToPlay is { } episode
         ? $"{L[HasEpisodeInProgress ? "Details_ResumeEpisode" : "Home_Play"]} · S{episode.SeasonNumber:00}E{episode.EpisodeNumber:00}"
         : L["Details_SeriesEnded"];
+    private RenderFragment PlayButtonIcon => builder =>
+    {
+        if (StreamingProviders.Count == 0) { builder.AddContent(0, "▶"); return; }
+        var sequence = 0;
+        builder.OpenElement(sequence++, "span");
+        builder.AddAttribute(sequence++, "class", "play-provider-icons");
+        foreach (var provider in StreamingProviders)
+        {
+            builder.OpenElement(sequence++, "img");
+            builder.AddAttribute(sequence++, "src", provider.LogoUrl);
+            builder.AddAttribute(sequence++, "alt", provider.Name);
+            builder.AddAttribute(sequence++, "title", $"Disponible sur {provider.Name}");
+            builder.CloseElement();
+        }
+        builder.CloseElement();
+    };
     private EpisodeDetails? NextEpisodeToPlay =>
         (CurrentEpisodeProgress is { } current ? AllEpisodes.FirstOrDefault(episode => episode.SeasonNumber == current.SeasonNumber && episode.EpisodeNumber == current.EpisodeNumber) : null)
         ?? AllEpisodes.FirstOrDefault(episode => episode.SeasonNumber > 0 && !IsWatched(episode));
@@ -151,6 +170,7 @@ else if (Details is not null)
         Details = null;
         EpisodesBySeason = [];
         EpisodeProgress = [];
+        StreamingProviders = [];
         try
         {
             var type = MediaType == "tv" ? "tv" : "movie";
@@ -159,23 +179,42 @@ else if (Details is not null)
             else
             {
                 Details = await response.Content.ReadFromJsonAsync<MediaDetails>();
-                if (type == "tv" && Details is not null) await LoadEpisodesAsync();
+                if (Details is not null)
+                {
+                    var availability = LoadStreamingAvailabilityAsync(type);
+                    if (type == "tv") await Task.WhenAll(LoadEpisodesAsync(), availability);
+                    else await availability;
+                }
             }
         }
         catch (HttpRequestException) { ErrorMessage = "Impossible de joindre TMDB."; }
         finally { IsLoading = false; }
     }
 
-    private Task PlayAsync()
+    private async Task PlayAsync()
     {
+        if (StreamingProviders.FirstOrDefault() is { } provider)
+        {
+            Navigation.NavigateTo(provider.SearchUrl, forceLoad: true);
+            return;
+        }
         if (MediaType != "tv")
         {
             Navigation.NavigateTo($"/lecture/movie/{TmdbId}");
-            return Task.CompletedTask;
+            return;
         }
         var episode = NextEpisodeToPlay;
-        if (episode is not null) PlayEpisode(episode);
-        return Task.CompletedTask;
+        if (episode is not null) await PlayEpisodeAsync(episode);
+    }
+
+    private async Task LoadStreamingAvailabilityAsync(string type)
+    {
+        try
+        {
+            var title = Uri.EscapeDataString(Details?.Title ?? "");
+            StreamingProviders = await Http.GetFromJsonAsync<List<StreamingProviderAvailability>>($"/api/streaming/{type}/{TmdbId}?title={title}") ?? [];
+        }
+        catch (HttpRequestException) { StreamingProviders = []; }
     }
 
     private async Task LoadEpisodesAsync()
@@ -206,8 +245,13 @@ else if (Details is not null)
 
     private bool IsWatched(EpisodeDetails episode) => FindProgress(episode)?.IsCompleted == true;
 
-    private void PlayEpisode(EpisodeDetails episode)
+    private async Task PlayEpisodeAsync(EpisodeDetails episode)
     {
+        if (StreamingProviders.FirstOrDefault() is { } provider)
+        {
+            Navigation.NavigateTo(provider.SearchUrl, forceLoad: true);
+            return;
+        }
         var query = $"seasonNumber={episode.SeasonNumber}&episodeNumber={episode.EpisodeNumber}&episodeTitle={Uri.EscapeDataString(episode.Title ?? "")}";
         Navigation.NavigateTo($"/lecture/tv/{TmdbId}?{query}");
     }
@@ -221,5 +265,6 @@ else if (Details is not null)
         List<string>? Directors = null, List<string>? Creators = null, List<string>? Cast = null);
     private sealed record SeasonSummary(int SeasonNumber, string Name, int EpisodeCount, string? Poster);
     private sealed record SeasonEpisodesResponse(int SeasonNumber, List<EpisodeDetails> Episodes);
+    private sealed record StreamingProviderAvailability(string Name, string LogoUrl, string SearchUrl);
     private sealed record EpisodeDetails(int Id, int SeasonNumber, int EpisodeNumber, string? Title, string? Overview, string? Still, string? AirDate, int? RuntimeMinutes);
 }

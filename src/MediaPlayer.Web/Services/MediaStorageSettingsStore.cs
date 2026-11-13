@@ -44,12 +44,20 @@ public sealed class MediaStorageSettingsStore(IWebHostEnvironment environment, I
                 var saved = JsonSerializer.Deserialize<MediaStorageSettings>(stream);
                 if (saved is not null && !string.IsNullOrWhiteSpace(saved.CacheRoot) && saved.CacheMaxBytes > 0
                     && (saved.ShareRatioLimit is null || (double.IsFinite(saved.ShareRatioLimit.Value) && saved.ShareRatioLimit.Value >= 0)))
+                {
+                    var hasAnonymousActionSetting = false;
+                    stream.Position = 0;
+                    using (var document = JsonDocument.Parse(stream))
+                        hasAnonymousActionSetting = document.RootElement.TryGetProperty("AllowAnonymousTorrentActions", out _)
+                            || document.RootElement.TryGetProperty("allowAnonymousTorrentActions", out _);
                     return saved with
                     {
                         CacheRoot = Path.GetFullPath(saved.CacheRoot),
                         PreferredResolution = IsSupportedResolution(saved.PreferredResolution) ? saved.PreferredResolution : 1080,
-                        SubtitleLanguage = IsSupportedSubtitleLanguage(saved.SubtitleLanguage) ? saved.SubtitleLanguage : "auto"
+                        SubtitleLanguage = IsSupportedSubtitleLanguage(saved.SubtitleLanguage) ? saved.SubtitleLanguage : "auto",
+                        AllowAnonymousTorrentActions = hasAnonymousActionSetting ? saved.AllowAnonymousTorrentActions : true
                     };
+                }
             }
         }
         catch (Exception ex) when (ex is IOException or JsonException or ArgumentException or NotSupportedException) { }
@@ -60,7 +68,7 @@ public sealed class MediaStorageSettingsStore(IWebHostEnvironment environment, I
             : Path.GetFullPath(Path.IsPathRooted(configuredRoot) ? configuredRoot : Path.Combine(environment.ContentRootPath, configuredRoot));
         var maxBytes = configuration.GetValue<long?>("Media:CacheMaxBytes") ?? 500L * 1024 * 1024 * 1024;
         var ratio = configuration.GetValue<double?>("Torrents:ShareRatioLimit") ?? 1.0;
-        return new MediaStorageSettings(root, Math.Max(100L * 1024 * 1024, maxBytes), Math.Max(0, ratio), 1080, false);
+        return new MediaStorageSettings(root, Math.Max(100L * 1024 * 1024, maxBytes), Math.Max(0, ratio), 1080, false, "auto", true);
     }
 
     public static bool IsSupportedResolution(int resolution) => resolution is 720 or 1080 or 2160;
@@ -75,4 +83,4 @@ public sealed class MediaStorageSettingsStore(IWebHostEnvironment environment, I
 }
 
 public sealed record MediaStorageSettings(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit,
-    int PreferredResolution = 1080, bool EnableUpnp = false, string SubtitleLanguage = "auto");
+    int PreferredResolution = 1080, bool EnableUpnp = false, string SubtitleLanguage = "auto", bool AllowAnonymousTorrentActions = true);

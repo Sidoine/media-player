@@ -5,6 +5,9 @@ using media_player.Services;
 using MediaPlayer.Localization;
 using Microsoft.AspNetCore.Localization;
 using Microsoft.AspNetCore.OutputCaching;
+using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.EntityFrameworkCore;
 using System.Globalization;
 
 if (args.Length == 2 && string.Equals(args[0], "--signal-dotnet-watch", StringComparison.Ordinal))
@@ -16,6 +19,8 @@ if (args.Length == 2 && string.Equals(args[0], "--signal-dotnet-watch", StringCo
 }
 
 var builder = WebApplication.CreateBuilder(args);
+// Keep Razor CSS isolation assets available when the app is launched from source in Production mode.
+builder.WebHost.UseStaticWebAssets();
 var playwrightMode = builder.Environment.IsEnvironment("Playwright") || builder.Configuration.GetValue("Playwright:Enabled", false);
 builder.Services.AddSingleton<TorrentCatalogStore>();
 builder.Services.AddSingleton<SelectedIndexerStore>();
@@ -30,6 +35,29 @@ builder.Services.AddSingleton<MediaAvailabilityWorker>();
 builder.Services.AddSingleton<IndexerPopularityService>();
 builder.Services.AddSingleton<MediaPropertiesService>();
 builder.Services.AddSingleton<ApiCredentialStore>();
+builder.Services.AddSingleton<ExternalStreamingSettingsStore>();
+builder.Services.AddSingleton<UserAccountStore>();
+builder.Services.AddSingleton<CircuitIdentityBridge>();
+var usersDatabase = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "users.db");
+Directory.CreateDirectory(Path.GetDirectoryName(usersDatabase)!);
+builder.Services.AddDbContextFactory<UserDbContext>(options => options.UseSqlite(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder
+{
+    DataSource = usersDatabase,
+    Pooling = false
+}.ToString()));
+builder.Services.AddSingleton<IAuthorizationHandler, AdminWhenMultiUserEnabledHandler>();
+builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme).AddCookie(options =>
+{
+    options.Cookie.Name = "MediaPlayer.Session";
+    options.Cookie.HttpOnly = true;
+    options.Cookie.SameSite = SameSiteMode.Strict;
+    options.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
+    options.Events.OnRedirectToLogin = context => { context.Response.StatusCode = 401; return Task.CompletedTask; };
+    options.Events.OnRedirectToAccessDenied = context => { context.Response.StatusCode = 403; return Task.CompletedTask; };
+});
+builder.Services.AddAuthorization(options => options.AddPolicy("AdminWhenMultiUserEnabled", policy => policy.AddRequirements(new AdminWhenMultiUserEnabledRequirement())));
+builder.Services.AddControllers();
+builder.Services.AddCascadingAuthenticationState();
 builder.Services.AddSingleton<TmdbImageCacheService>();
 builder.Services.AddHttpClient("tmdb-images", client => client.BaseAddress = new Uri("https://image.tmdb.org/t/p/"));
 builder.Services.AddOutputCache(options =>
@@ -41,7 +69,7 @@ builder.Services.AddOutputCache(options =>
     options.AddPolicy("CatalogImages", policy => policy.Expire(TimeSpan.FromDays(1)));
 });
 builder.Services.AddSingleton<ServerRestartService>();
-if (!playwrightMode)
+if (!playwrightMode && !builder.Environment.IsEnvironment("Testing"))
 {
     builder.Services.AddHostedService(sp => sp.GetRequiredService<MediaAvailabilityWorker>());
     builder.Services.AddHostedService(sp => sp.GetRequiredService<IndexerPopularityService>());
@@ -51,9 +79,12 @@ builder.Services.AddHttpClient("opensubtitles", client => client.Timeout = TimeS
 builder.Services.AddSingleton<SubtitleService>();
 builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddLocalization();
+builder.Services.AddTransient<CircuitIdentityForwardingHandler>();
 builder.Services.AddScoped(sp =>
 {
-    var client = new HttpClient { BaseAddress = new Uri(sp.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>().BaseUri) };
+    var handler = sp.GetRequiredService<CircuitIdentityForwardingHandler>();
+    handler.InnerHandler = new HttpClientHandler();
+    var client = new HttpClient(handler) { BaseAddress = new Uri(sp.GetRequiredService<Microsoft.AspNetCore.Components.NavigationManager>().BaseUri) };
     client.DefaultRequestHeaders.AcceptLanguage.ParseAdd(CultureInfo.CurrentUICulture.Name);
     return client;
 });
@@ -83,6 +114,8 @@ builder.Services.AddHttpClient("tmdb", (sp, client) =>
     if (!string.IsNullOrWhiteSpace(token)) client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 });
 var app = builder.Build();
+await app.Services.GetRequiredService<UserAccountStore>().InitializeAsync();
+await app.Services.GetRequiredService<WatchProgressStore>().InitializeAsync();
 static string TmdbLanguage() => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "fr" ? "fr-FR" : "en-US";
 var supportedCultures = new[] { new CultureInfo("en"), new CultureInfo("fr") };
 var localizationOptions = new RequestLocalizationOptions()
@@ -94,120 +127,49 @@ app.UseRequestLocalization(localizationOptions);
 app.UseStaticFiles();
 app.UseOutputCache();
 app.UseAntiforgery();
+app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated != true)
+    {
+        var bridge = context.RequestServices.GetRequiredService<CircuitIdentityBridge>();
+        var principal = bridge.Validate(context.Request.Headers["X-MediaPlayer-Circuit"].FirstOrDefault());
+        if (principal is not null) context.User = principal;
+    }
+    await next();
+});
+app.UseAuthorization();
+app.Use(async (context, next) =>
+{
+    var path = context.Request.Path;
+    var isTorrentInitiation = HttpMethods.IsPost(context.Request.Method)
+        && (path.Equals("/api/watchlist", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/watchlist/next-episode", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/api/downloads", StringComparison.OrdinalIgnoreCase));
+    if (isTorrentInitiation && !context.RequestServices.GetRequiredService<MediaStorageSettingsStore>().Current.AllowAnonymousTorrentActions
+        && (await context.RequestServices.GetRequiredService<UserAccountStore>().GetAllAsync()).Count > 0
+        && context.User.Identity?.IsAuthenticated != true)
+    {
+        context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+        return;
+    }
+    var settingsApi = path.StartsWithSegments("/api/configuration") || path.StartsWithSegments("/api/bittorrent")
+        || path.StartsWithSegments("/api/selected-indexers")
+        || path.StartsWithSegments("/api/indexer-definitions") || path.StartsWithSegments("/api/server/restart")
+        || path.Equals("/api/catalog/indexer-popular", StringComparison.OrdinalIgnoreCase)
+        || (path.Equals("/api/torrent-catalogs/search", StringComparison.OrdinalIgnoreCase)
+            && context.Request.Query.ContainsKey("sourceType"));
+    if (settingsApi)
+    {
+        var authorization = context.RequestServices.GetRequiredService<IAuthorizationService>();
+        var result = await authorization.AuthorizeAsync(context.User, "AdminWhenMultiUserEnabled");
+        if (!result.Succeeded) { context.Response.StatusCode = context.User.Identity?.IsAuthenticated == true ? 403 : 401; return; }
+    }
+    await next();
+});
 if (playwrightMode) app.UseMiddleware<PlaywrightApiMockMiddleware>();
 
-app.MapGet("/api/configuration/credentials", (ApiCredentialStore credentials) => Results.Json(credentials.GetStatus()));
-app.MapPut("/api/configuration/credentials", async (ApiCredentialsInput input, ApiCredentialStore credentials, IOutputCacheStore outputCache, CancellationToken ct) =>
-{
-    await credentials.SaveLocalAsync(input.TmdbReadAccessToken, input.OpenSubtitlesApiKey, ct);
-    await outputCache.EvictByTagAsync("catalog", ct);
-    return Results.Json(credentials.GetStatus());
-});
-app.MapGet("/api/configuration/media", (MediaStorageSettingsStore settings, MediaDownloadService downloads) =>
-{
-    var value = settings.Current;
-    return Results.Json(new
-    {
-        cacheRoot = value.CacheRoot,
-        activeCacheRoot = downloads.CacheRoot,
-        cacheMaxBytes = value.CacheMaxBytes,
-        usedBytes = downloads.GetStorageUsedBytes(),
-        shareRatioLimit = value.ShareRatioLimit,
-        preferredResolution = value.PreferredResolution,
-        subtitleLanguage = value.SubtitleLanguage,
-        resolvedSubtitleLanguage = settings.ResolvedSubtitleLanguage,
-        enableUpnp = value.EnableUpnp,
-        activeEnableUpnp = downloads.EnableUpnp,
-        portForwarding = downloads.GetPortForwardingDiagnostic(),
-        requiresRestart = !string.Equals(Path.GetFullPath(value.CacheRoot), Path.GetFullPath(downloads.CacheRoot), StringComparison.OrdinalIgnoreCase)
-            || value.EnableUpnp != downloads.EnableUpnp
-    });
-});
-app.MapPut("/api/configuration/media", async (MediaStorageSettingsInput input, MediaStorageSettingsStore settings, MediaDownloadService downloads, IWebHostEnvironment environment, CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(input.CacheRoot)) return Results.BadRequest(new { error = "Indiquez le dossier de stockage des médias." });
-    if (input.CacheMaxBytes < 100L * 1024 * 1024 || input.CacheMaxBytes > 10L * 1024 * 1024 * 1024 * 1024)
-        return Results.BadRequest(new { error = "Le quota doit être compris entre 100 Mo et 10 To." });
-    if (input.ShareRatioLimit is double ratio && (!double.IsFinite(ratio) || ratio < 0 || ratio > 1000))
-        return Results.BadRequest(new { error = "Le ratio doit être compris entre 0 et 1000, ou choisir le partage sans limite." });
-    var preferredResolution = input.PreferredResolution ?? settings.Current.PreferredResolution;
-    if (!MediaStorageSettingsStore.IsSupportedResolution(preferredResolution))
-        return Results.BadRequest(new { error = "La résolution préférée doit être 720p, 1080p ou 2160p." });
-    var subtitleLanguage = input.SubtitleLanguage?.Trim().ToLowerInvariant() ?? settings.Current.SubtitleLanguage;
-    if (!MediaStorageSettingsStore.IsSupportedSubtitleLanguage(subtitleLanguage))
-        return Results.BadRequest(new { error = "La langue des sous-titres doit être auto, en ou fr." });
-    var enableUpnp = input.EnableUpnp ?? settings.Current.EnableUpnp;
-
-    string cacheRoot;
-    try
-    {
-        cacheRoot = Path.GetFullPath(Path.IsPathRooted(input.CacheRoot)
-            ? input.CacheRoot.Trim() : Path.Combine(environment.ContentRootPath, input.CacheRoot.Trim()));
-        Directory.CreateDirectory(cacheRoot);
-        var probe = Path.Combine(cacheRoot, $".mediaplayer-write-test-{Guid.NewGuid():N}");
-        await using (File.Create(probe)) { }
-        File.Delete(probe);
-    }
-    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-    {
-        return Results.BadRequest(new { error = "Le dossier choisi ne peut pas être utilisé par le serveur." });
-    }
-
-    var saved = await settings.SaveAsync(new MediaStorageSettings(cacheRoot, input.CacheMaxBytes, input.ShareRatioLimit, preferredResolution, enableUpnp, subtitleLanguage), ct);
-    await downloads.ApplySharingPolicyAsync(ct);
-    return Results.Json(new
-    {
-        cacheRoot = saved.CacheRoot,
-        activeCacheRoot = downloads.CacheRoot,
-        cacheMaxBytes = saved.CacheMaxBytes,
-        usedBytes = downloads.GetStorageUsedBytes(),
-        shareRatioLimit = saved.ShareRatioLimit,
-        preferredResolution = saved.PreferredResolution,
-        subtitleLanguage = saved.SubtitleLanguage,
-        resolvedSubtitleLanguage = settings.ResolvedSubtitleLanguage,
-        enableUpnp = saved.EnableUpnp,
-        activeEnableUpnp = downloads.EnableUpnp,
-        portForwarding = downloads.GetPortForwardingDiagnostic(),
-        requiresRestart = !string.Equals(Path.GetFullPath(saved.CacheRoot), Path.GetFullPath(downloads.CacheRoot), StringComparison.OrdinalIgnoreCase)
-            || saved.EnableUpnp != downloads.EnableUpnp
-    });
-});
-app.MapPost("/api/server/restart", (HttpContext context, ServerRestartService restart) =>
-{
-    restart.ScheduleRestart(context);
-    return Results.Accepted();
-});
-
-app.MapGet("/api/indexer-definitions/status", (IndexerDefinitionCacheService cache, CancellationToken ct) => cache.GetStatusAsync(ct));
-app.MapPost("/api/indexer-definitions/refresh", (IndexerDefinitionCacheService cache, CancellationToken ct) => cache.RefreshAsync(ct));
-app.MapGet("/api/indexer-definitions", (IndexerDefinitionCacheService cache, string? query, CancellationToken ct) => cache.GetDefinitionsAsync(query, ct));
-app.MapGet("/api/indexer-definitions/internal", (IndexerDefinitionCacheService cache, string? query, CancellationToken ct) => cache.GetBundledDefinitionsAsync(query, ct));
-app.MapGet("/api/bittorrent/trackers", async (BittorrentTrackerStore trackers, CancellationToken ct) => Results.Json(new { urls = await trackers.GetAllAsync(ct) }));
-app.MapPut("/api/bittorrent/trackers", async (TrackerInput input, BittorrentTrackerStore trackers, CancellationToken ct) =>
-{
-    if (input.Urls.Count > 50) return Results.BadRequest(new { error = "Vous pouvez configurer jusqu’à 50 trackers." });
-    var normalized = new List<string>();
-    foreach (var value in input.Urls.Select(url => url.Trim()).Where(url => url.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase))
-    {
-        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme is not ("udp" or "http" or "https"))
-            return Results.BadRequest(new { error = $"Adresse de tracker invalide : {value}" });
-        normalized.Add(uri.ToString());
-    }
-    await trackers.SaveAsync(normalized, ct);
-    return Results.Json(new { urls = normalized });
-});
-app.MapGet("/api/selected-indexers", async (SelectedIndexerStore store, CancellationToken ct) => Results.Json(await store.GetAllAsync(ct)));
-app.MapPost("/api/selected-indexers", async (SelectedIndexerInput input, IndexerDefinitionCacheService cache, SelectedIndexerStore store, CancellationToken ct) =>
-{
-    if (!input.RightsConfirmed) return Results.BadRequest(new { error = "Confirmez que vous pouvez utiliser le média obtenu via cette source." });
-    var definition = (await cache.GetDefinitionsAsync(cancellationToken: ct)).FirstOrDefault(x => string.Equals(x.Id, input.DefinitionId, StringComparison.OrdinalIgnoreCase));
-    definition ??= (await cache.GetBundledDefinitionsAsync(cancellationToken: ct)).FirstOrDefault(x => string.Equals(x.Id, input.DefinitionId, StringComparison.OrdinalIgnoreCase));
-    if (definition is null) return Results.NotFound(new { error = "Cette définition n’est pas disponible localement." });
-    var source = await store.AddAsync(new SelectedIndexer(Guid.NewGuid(), definition.Id, definition.Name, true, DateTimeOffset.UtcNow), ct);
-    return Results.Created($"/api/selected-indexers/{source.Id}", source);
-});
-app.MapDelete("/api/selected-indexers/{id:guid}", async (Guid id, SelectedIndexerStore store, CancellationToken ct) =>
-    await store.RemoveAsync(id, ct) ? Results.NoContent() : Results.NotFound());
+app.MapControllers();
 
 app.MapGet("/api/catalog", async (IHttpClientFactory clients, string? query, CancellationToken ct) =>
 {
@@ -388,23 +350,6 @@ app.MapGet("/api/catalog/image/{size}/{fileName}", async (string size, string fi
     return image is null ? Results.NotFound() : Results.File(image.Value.Path, image.Value.ContentType);
 }).CacheOutput("CatalogImages");
 
-app.MapGet("/api/torrent-catalogs", async (TorrentCatalogStore store, CancellationToken ct) =>
-    Results.Json((await store.GetAll(ct)).Select(x => new { x.Id, x.Name, x.Url, x.RightsConfirmed, x.AddedAt })));
-app.MapPost("/api/torrent-catalogs", async (TorrentCatalogInput input, TorrentCatalogStore store, CancellationToken ct) =>
-{
-    if (string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 100)
-        return Results.BadRequest(new { error = "Donnez un nom de 1 à 100 caractères à la source." });
-    if (!Uri.TryCreate(input.Url, UriKind.Absolute, out var uri) || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
-        return Results.BadRequest(new { error = "L’adresse du catalogue doit être une URL HTTP ou HTTPS valide." });
-    if (!input.RightsConfirmed)
-        return Results.BadRequest(new { error = "Confirmez que ce catalogue ne référence que des médias dont vous pouvez autoriser le téléchargement." });
-    if (string.IsNullOrWhiteSpace(input.ApiKey) || input.ApiKey.Length > 500)
-        return Results.BadRequest(new { error = "Une clé API Torznab valide est requise." });
-    var saved = await store.Add(new TorrentCatalogSource(Guid.NewGuid(), input.Name.Trim(), uri.ToString(), input.ApiKey, input.RightsConfirmed, DateTimeOffset.UtcNow), ct);
-    return Results.Created($"/api/torrent-catalogs/{saved.Id}", new { saved.Id, saved.Name, saved.Url, saved.RightsConfirmed, saved.AddedAt });
-});
-app.MapDelete("/api/torrent-catalogs/{id:guid}", async (Guid id, TorrentCatalogStore store, CancellationToken ct) =>
-    await store.Remove(id, ct) ? Results.NoContent() : Results.NotFound());
 app.MapGet("/api/torrent-catalogs/search", async (string query, string? sourceType, Guid? sourceId, TorrentCatalogSearchService search, CancellationToken ct) =>
 {
     if (string.IsNullOrWhiteSpace(query) || query.Length > 200) return Results.BadRequest(new { error = "Saisissez un titre (200 caractères maximum)." });
@@ -496,18 +441,19 @@ app.MapGet("/api/downloads/{tmdbId:int}/stream", async (int tmdbId, string? medi
     catch (InvalidOperationException ex) { return Results.Conflict(new { error = ex.Message }); }
 });
 app.MapGet("/api/downloads", (MediaDownloadService downloads) => Results.Json(downloads.GetActiveDownloads()));
-app.MapGet("/api/watch-progress", async (WatchProgressStore progress, MediaDownloadService downloads,
+app.MapGet("/api/watch-progress", async (HttpContext context, WatchProgressStore progress, MediaDownloadService downloads,
     CachedMediaAssociationStore associationStore, CancellationToken ct) =>
 {
     var associations = await associationStore.GetLibraryAssociationsAsync(downloads.GetCompletedMediaFiles(), ct);
-    await progress.ReconcileLibraryProgressAsync(associations, ct);
-    return Results.Json(await progress.GetAllAsync(ct));
+    var userName = context.User.Identity?.Name;
+    await progress.ReconcileLibraryProgressAsync(associations, userName, ct);
+    return Results.Json(await progress.GetAllAsync(userName, ct));
 });
-app.MapPost("/api/watch-progress", async (PlaybackProgressRequest input, WatchProgressStore progress, CancellationToken ct) =>
+app.MapPost("/api/watch-progress", async (HttpContext context, PlaybackProgressRequest input, WatchProgressStore progress, CancellationToken ct) =>
 {
     if (input.TmdbId <= 0 || input.MediaType is not ("movie" or "tv") || string.IsNullOrWhiteSpace(input.Title)) return Results.BadRequest();
     await progress.SaveAsync(input.TmdbId, input.MediaType, input.Title, input.CurrentTimeSeconds,
-        input.DurationSeconds, input.PosterUrl, input.SeasonNumber, input.EpisodeNumber, ct, input.LibraryPath);
+        input.DurationSeconds, input.PosterUrl, input.SeasonNumber, input.EpisodeNumber, ct, input.LibraryPath, context.User.Identity?.Name);
     return Results.NoContent();
 });
 app.MapGet("/api/watchlist", async (MediaWatchlistStore store, CancellationToken ct) => Results.Json(await store.GetAllAsync(ct)));
@@ -561,7 +507,7 @@ app.MapPost("/api/watchlist", async (MediaWatchlistRequest input, MediaWatchlist
 });
 app.MapDelete("/api/watchlist/{key}", async (string key, MediaWatchlistStore store, CancellationToken ct) =>
     await store.RemoveAsync(key, ct) ? Results.NoContent() : Results.NotFound());
-app.MapPost("/api/watchlist/next-episode", async (NextEpisodeRequest input, MediaWatchlistStore store, WatchProgressStore progress, MediaAvailabilityWorker worker, IHttpClientFactory clients, CancellationToken ct) =>
+app.MapPost("/api/watchlist/next-episode", async (HttpContext context, NextEpisodeRequest input, MediaWatchlistStore store, WatchProgressStore progress, MediaAvailabilityWorker worker, IHttpClientFactory clients, CancellationToken ct) =>
 {
     if (input.TmdbId <= 0 || input.SeasonNumber < 0 || input.EpisodeNumber <= 0) return Results.BadRequest();
     var client = clients.CreateClient("tmdb");
@@ -574,7 +520,7 @@ app.MapPost("/api/watchlist/next-episode", async (NextEpisodeRequest input, Medi
             .Where(season => season.GetProperty("episode_count").GetInt32() > 0)
             .Select(season => season.GetProperty("season_number").GetInt32())
             .OrderBy(number => number).ToArray();
-        var watched = await progress.GetEpisodesAsync(input.TmdbId, ct);
+        var watched = await progress.GetEpisodesAsync(input.TmdbId, context.User.Identity?.Name, ct);
         foreach (var seasonNumber in seasons.Where(number => number >= input.SeasonNumber))
         {
             using var seasonResponse = await client.GetAsync($"tv/{input.TmdbId}/season/{seasonNumber}?language=fr-FR", ct);
@@ -714,11 +660,7 @@ static bool IsPathWithinRoot(string fullPath, string root)
     return fullPath.StartsWith(basePath, StringComparison.OrdinalIgnoreCase);
 }
 
-record TorrentCatalogInput(string Name, string Url, string ApiKey, bool RightsConfirmed);
-record TrackerInput(List<string> Urls);
 record NextEpisodeRequest(int TmdbId, int SeasonNumber, int EpisodeNumber, string Title, string? OriginalLanguage, int? Year);
-record ApiCredentialsInput(string? TmdbReadAccessToken, string? OpenSubtitlesApiKey);
-record MediaStorageSettingsInput(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit, int? PreferredResolution, bool? EnableUpnp = null, string? SubtitleLanguage = null);
 record SubtitleSelectionInput(string Key, string? Language = null);
 public record TorrentCatalogSource(Guid Id, string Name, string Url, string ApiKey, bool RightsConfirmed, DateTimeOffset AddedAt);
 record LibraryItem(string Name, string Path, int TmdbId, string MediaType, int? SeasonNumber, int? EpisodeNumber, string? PosterUrl = null);

@@ -34,3 +34,4 @@
 .playback-settings-form { grid-template-columns:minmax(0,1fr); }
 .sharing-controls .sharing-ratio { display:flex; align-items:center; justify-content:flex-end; gap:12px; min-width:190px; white-space:nowrap; }
 .sharing-controls .sharing-ratio input { width:92px; min-width:92px; }
+.anonymous-torrent-setting { margin-top:14px; }
