@@ -1,0 +1,8 @@
+.git
+**/bin
+**/obj
+**/App_Data
+artifacts
+build-check
+tests
+src/MediaPlayer.AndroidTv
