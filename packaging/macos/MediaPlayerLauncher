@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+
+RESOURCES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+VERSION="$(cat "$RESOURCES/build-version")"
+SUPPORT="${HOME}/Library/Application Support/Bobine"
+DATA_DIR="$SUPPORT/App_Data"
+SERVER_DIR="$SUPPORT/server-$VERSION"
+URL="http://127.0.0.1:6050"
+mkdir -p "$DATA_DIR"
+
+# Reuse a server already running after a setup-triggered restart or app relaunch.
+if curl --silent --fail --max-time 1 "$URL/" >/dev/null 2>&1; then
+  open "$URL/"
+  exit 0
+fi
+
+if [ ! -x "$SERVER_DIR/MediaPlayer.Web" ]; then
+  STAGING="$SUPPORT/server-$VERSION-staging"
+  rm -rf "$STAGING"
+  mkdir -p "$STAGING"
+  ditto "$RESOURCES/server" "$STAGING"
+  rm -rf "$STAGING/App_Data"
+  ln -s "$DATA_DIR" "$STAGING/App_Data"
+  rm -rf "$SERVER_DIR"
+  mv "$STAGING" "$SERVER_DIR"
+fi
+
+MEDIA_ROOT="$HOME/Movies/MediaPlayer"
+if [ ! -f "$DATA_DIR/desktop-setup-complete" ]; then
+  MEDIA_ROOT="$(osascript <<'APPLESCRIPT'
+try
+  set chosenFolder to choose folder with prompt "Choisissez le dossier où Bobine conservera vos médias" default location (path to movies folder)
+  return POSIX path of chosenFolder
+on error number -128
+  return ""
+end try
+APPLESCRIPT
+)"
+  if [ -z "$MEDIA_ROOT" ]; then exit 0; fi
+fi
+
+export Media__Root="$MEDIA_ROOT"
+export MediaPlayer__DesktopSetup=true
+export ASPNETCORE_URLS="http://0.0.0.0:6050"
+cd "$SERVER_DIR"
+nohup "$SERVER_DIR/MediaPlayer.Web" --urls "$ASPNETCORE_URLS" \
+  >"$SUPPORT/server.log" 2>&1 </dev/null &
+
+for _ in $(seq 1 40); do
+  if curl --silent --fail --max-time 1 "$URL/" >/dev/null 2>&1; then
+    if [ ! -f "$DATA_DIR/desktop-setup-complete" ]; then
+      open "$URL/bienvenue"
+    else
+      open "$URL/"
+    fi
+    exit 0
+  fi
+  sleep 0.5
+done
+
+osascript -e 'display dialog "Bobine n’a pas démarré. Consultez le journal dans Bibliothèque/Application Support/Bobine/server.log." buttons {"OK"} with icon stop' >/dev/null 2>&1 || true
+exit 1

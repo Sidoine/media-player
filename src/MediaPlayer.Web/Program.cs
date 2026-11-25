@@ -132,6 +132,20 @@ localizationOptions.RequestCultureProviders.Insert(0, new CookieRequestCulturePr
 app.UseRequestLocalization(localizationOptions);
 app.UseStaticFiles();
 app.UseOutputCache();
+if (builder.Configuration.GetValue<bool>("MediaPlayer:DesktopSetup"))
+{
+    var setupMarker = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "desktop-setup-complete");
+    app.Use(async (context, next) =>
+    {
+        if (!File.Exists(setupMarker) && HttpMethods.IsGet(context.Request.Method)
+            && context.Request.Path == "/")
+        {
+            context.Response.Redirect("/bienvenue");
+            return;
+        }
+        await next();
+    });
+}
 app.UseAntiforgery();
 app.UseAuthentication();
 app.Use(async (context, next) =>

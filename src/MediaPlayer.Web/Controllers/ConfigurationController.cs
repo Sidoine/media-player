@@ -128,3 +128,19 @@ public sealed class ConfigurationController(
             || value.EnableUpnp != downloads.EnableUpnp
     };
 }
+
+[ApiController]
+public sealed class DesktopSetupController(IConfiguration configuration, IWebHostEnvironment environment) : ControllerBase
+{
+    [HttpPost("/api/setup/complete")]
+    public IActionResult Complete()
+    {
+        if (!configuration.GetValue<bool>("MediaPlayer:DesktopSetup")) return NotFound();
+        if (HttpContext.Connection.RemoteIpAddress is not { } remoteIp || !System.Net.IPAddress.IsLoopback(remoteIp))
+            return Forbid();
+        var marker = Path.Combine(environment.ContentRootPath, "App_Data", "desktop-setup-complete");
+        Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
+        System.IO.File.WriteAllText(marker, DateTimeOffset.UtcNow.ToString("O"));
+        return NoContent();
+    }
+}

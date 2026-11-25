@@ -57,6 +57,16 @@ docker compose up --build
 
 Set `TMDB__ReadAccessToken` or `OpenSubtitles__ApiKey` in the environment before starting Compose to configure external services.
 
+## macOS standalone app
+
+The GitHub Actions workflow builds self-contained `.app` packages for Apple Silicon and Intel Macs. It can be run manually from the Actions tab or creates a GitHub release when a `v*` tag is pushed. A Mac and a .NET installation are not required to build the packages locally because the workflow uses macOS runners.
+
+On the first launch, Bobine asks the user to choose a media folder, starts the server, and opens the setup page in the browser. The optional TMDB and OpenSubtitles keys can be entered there or later in Configuration. Application data and encrypted credentials are stored in `~/Library/Application Support/Bobine`; media stays in the chosen folder. The server listens on port 6050 on the local network so a TV can connect to the Mac's local IP address.
+
+To install, download the ZIP matching the Mac, open it, and move `Bobine.app` to Applications. If macOS blocks the first launch, Control-click the app, choose **Open**, then confirm **Open** in the dialog.
+
+The current packages are not signed or notarized by Apple. macOS may ask the user to approve opening the downloaded app in Privacy & Security. Distributing without that warning requires an Apple Developer signing identity and notarization credentials in GitHub Actions secrets. Test the downloads on both Apple Silicon and Intel hardware before recommending them to users.
+
 ## Android TV client
 
 Build a Release APK with the Android workload installed:
