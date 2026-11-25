@@ -67,6 +67,12 @@ To install, download the ZIP matching the Mac, open it, and move `Bobine.app` to
 
 The current packages are not signed or notarized by Apple. macOS may ask the user to approve opening the downloaded app in Privacy & Security. Distributing without that warning requires an Apple Developer signing identity and notarization credentials in GitHub Actions secrets. Test the downloads on both Apple Silicon and Intel hardware before recommending them to users.
 
+## Windows standalone app
+
+The self-contained Windows x64 package includes a launcher and server runtime, so .NET does not need to be installed. The launcher opens a folder picker on first start, starts the server, and opens the setup page. Application settings and credentials are kept under `%LOCALAPPDATA%\Bobine`; media remains in the selected folder. The server listens on port 6050 so a TV on the local network can connect to the PC's local IP address.
+
+The ZIP is built locally on Windows with `packaging/windows/build.ps1`. GitHub Actions also builds it on every update to `main` and attaches it to tagged releases. Windows may show a SmartScreen warning because the package is not code-signed.
+
 ## Android TV client
 
 Build a Release APK with the Android workload installed:

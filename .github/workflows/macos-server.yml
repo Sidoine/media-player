@@ -57,9 +57,24 @@ jobs:
           name: ${{ matrix.artifact }}
           path: artifacts/*.zip
           if-no-files-found: error
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Build Windows package
+        shell: pwsh
+        run: .\packaging\windows\build.ps1 -OutputDirectory artifacts\windows
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Bobine-Windows-x64
+          path: artifacts/windows/Bobine-Windows-x64.zip
+          if-no-files-found: error
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
