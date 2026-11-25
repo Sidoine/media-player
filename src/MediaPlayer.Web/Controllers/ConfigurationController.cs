@@ -135,12 +135,51 @@ public sealed class DesktopSetupController(
     IWebHostEnvironment environment,
     ApiCredentialStore credentials) : ControllerBase
 {
+    [HttpGet("/api/setup/folders")]
+    public IActionResult BrowseFolders([FromQuery] string? path)
+    {
+        if (!configuration.GetValue<bool>("MediaPlayer:DesktopSetup")) return NotFound();
+        if (!IsLoopbackRequest()) return Forbid();
+        if (System.IO.File.Exists(Path.Combine(environment.ContentRootPath, "App_Data", "desktop-setup-complete"))) return NotFound();
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            var roots = new List<SetupFolderItem>();
+            AddRoot(roots, "Home", Environment.GetFolderPath(Environment.SpecialFolder.UserProfile));
+            AddRoot(roots, "Videos", Environment.GetFolderPath(Environment.SpecialFolder.MyVideos));
+            AddRoot(roots, "Documents", Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments));
+            AddRoot(roots, "Downloads", Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads"));
+            if (OperatingSystem.IsWindows())
+            {
+                foreach (var drive in DriveInfo.GetDrives().Where(drive => drive.IsReady))
+                    AddRoot(roots, drive.Name, drive.RootDirectory.FullName);
+            }
+            else if (Directory.Exists("/Volumes")) AddRoot(roots, "Volumes", "/Volumes");
+            return Ok(new SetupFoldersResponse(null, null, roots));
+        }
+
+        try
+        {
+            var current = Path.GetFullPath(path);
+            if (!Directory.Exists(current)) return BadRequest(new { error = "Ce dossier n’existe pas ou n’est pas accessible." });
+            var parent = Directory.GetParent(current)?.FullName;
+            var folders = Directory.EnumerateDirectories(current)
+                .Select(folder => new SetupFolderItem(Path.GetFileName(Path.TrimEndingDirectorySeparator(folder)), folder))
+                .OrderBy(folder => folder.Name, StringComparer.CurrentCultureIgnoreCase)
+                .ToList();
+            return Ok(new SetupFoldersResponse(current, parent, folders));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            return BadRequest(new { error = "Impossible de lire le contenu de ce dossier." });
+        }
+    }
+
     [HttpPost("/api/setup/complete")]
     public IActionResult Complete()
     {
         if (!configuration.GetValue<bool>("MediaPlayer:DesktopSetup")) return NotFound();
-        if (HttpContext.Connection.RemoteIpAddress is not { } remoteIp || !System.Net.IPAddress.IsLoopback(remoteIp))
-            return Forbid();
+        if (!IsLoopbackRequest()) return Forbid();
         if (!credentials.IsFullyConfigured)
             return BadRequest(new { error = "Les clés TMDB et OpenSubtitles sont nécessaires pour terminer la configuration." });
         var marker = Path.Combine(environment.ContentRootPath, "App_Data", "desktop-setup-complete");
@@ -148,4 +187,17 @@ public sealed class DesktopSetupController(
         System.IO.File.WriteAllText(marker, DateTimeOffset.UtcNow.ToString("O"));
         return NoContent();
     }
+
+    private bool IsLoopbackRequest() => HttpContext.Connection.RemoteIpAddress is { } remoteIp
+        && System.Net.IPAddress.IsLoopback(remoteIp);
+
+    private static void AddRoot(List<SetupFolderItem> roots, string name, string path)
+    {
+        if (!string.IsNullOrWhiteSpace(path) && Directory.Exists(path)
+            && !roots.Any(root => string.Equals(root.Path, path, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+            roots.Add(new SetupFolderItem(name, path));
+    }
+
+    private sealed record SetupFoldersResponse(string? CurrentPath, string? ParentPath, List<SetupFolderItem> Folders);
+    private sealed record SetupFolderItem(string Name, string Path);
 }

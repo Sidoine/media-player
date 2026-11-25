@@ -1,6 +1,7 @@
 @page "/bienvenue"
 @inject HttpClient Http
 @inject NavigationManager Navigation
+@inject IJSRuntime JS
 
 <PageTitle>@T("Première configuration", "First setup") · Bobine</PageTitle>
 
@@ -9,7 +10,7 @@
         <div class="welcome-mark">BOBINE</div>
         <p class="welcome-kicker">@T("VOTRE SERVEUR EST PRÊT", "YOUR SERVER IS READY")</p>
         <h1>@T("Bienvenue chez vous.", "Welcome home.")</h1>
-        <p class="welcome-intro">@T("Le dossier a été choisi dans la fenêtre précédente. Il n’y a rien à saisir ici.", "The folder was selected in the previous dialog. There is nothing to type here.")</p>
+        <p class="welcome-intro">@T("Choisissez une fois le dossier média ici, puis saisissez les deux clés nécessaires à Bobine.", "Choose the media folder here, then enter the two API keys Bobine needs.")</p>
 
         @if (!string.IsNullOrWhiteSpace(Message))
         {
@@ -17,16 +18,42 @@
         }
 
         <div class="welcome-folder">
-            <span>@T("Dossier des médias sélectionné", "Selected media folder")</span>
-            @if (string.IsNullOrWhiteSpace(MediaRoot))
-            {
-                <strong>@T("Lecture des réglages…", "Loading settings…")</strong>
-            }
-            else
-            {
-                <code title="@MediaRoot">@MediaRoot</code>
-            }
+            <span>@T("Dossier des médias", "Media folder")</span>
+            <code title="@MediaRoot">@(string.IsNullOrWhiteSpace(MediaRoot) ? T("Chargement…", "Loading…") : MediaRoot)</code>
+            <button class="welcome-folder-button" type="button" @onclick="OpenFolderPickerAsync" disabled="@Busy">@T("Choisir un dossier…", "Choose a folder…")</button>
         </div>
+
+        @if (PickerOpen)
+        {
+            <div class="folder-picker-backdrop">
+                <section class="folder-picker" role="dialog" aria-modal="true" aria-labelledby="folder-picker-title">
+                    <div class="folder-picker-heading">
+                        <div><p class="welcome-kicker">@T("DOSSIERS DU SERVEUR", "SERVER FOLDERS")</p><h2 id="folder-picker-title">@T("Choisir un dossier", "Choose a folder")</h2></div>
+                        <button type="button" class="folder-picker-close" @onclick="CloseFolderPicker" aria-label="@T("Fermer", "Close")">×</button>
+                    </div>
+                    <p class="folder-picker-path">@(PickerCurrentPath ?? T("Emplacements disponibles", "Available locations"))</p>
+                    @if (!string.IsNullOrWhiteSpace(PickerMessage)) { <p class="welcome-message error">@PickerMessage</p> }
+                    <div class="folder-picker-list">
+                        @if (PickerParentPath is not null)
+                        {
+                            <button type="button" class="folder-picker-item parent" @onclick="() => BrowseFolderAsync(PickerParentPath)">↰ <span>@T("Dossier parent", "Parent folder")</span></button>
+                        }
+                        @foreach (var folder in PickerFolders)
+                        {
+                            <button type="button" class="folder-picker-item" @onclick="() => BrowseFolderAsync(folder.Path)"><span class="folder-icon">▰</span><span>@folder.Name</span><span class="folder-chevron">›</span></button>
+                        }
+                        @if (PickerFolders.Count == 0 && string.IsNullOrEmpty(PickerMessage))
+                        {
+                            <p class="folder-picker-empty">@T("Aucun sous-dossier dans cet emplacement.", "No subfolders in this location.")</p>
+                        }
+                    </div>
+                    <div class="folder-picker-actions">
+                        <button class="welcome-skip" type="button" @onclick="CloseFolderPicker">@T("Annuler", "Cancel")</button>
+                        <button class="welcome-primary" type="button" disabled="@(PickerCurrentPath is null)" @onclick="UseSelectedFolder">@T("Utiliser ce dossier", "Use this folder")</button>
+                    </div>
+                </section>
+            </div>
+        }
 
         <form class="welcome-fields" @onsubmit="FinishAsync" @onsubmit:preventDefault>
             <label>TMDB Read Access Token <span>@(TmdbConfigured ? T("(déjà configurée)", "(already configured)") : T("(obligatoire)", "(required)"))</span>
@@ -38,7 +65,7 @@
             <button class="welcome-primary" type="submit" disabled="@(Busy || string.IsNullOrWhiteSpace(MediaRoot))">@(Busy ? T("Enregistrement…", "Saving…") : T("Enregistrer et ouvrir Bobine", "Save and open Bobine"))</button>
         </form>
 
-        <p class="welcome-footnote">@T("Les deux clés sont nécessaires au fonctionnement de Bobine. Elles sont enregistrées localement et chiffrées.", "Both keys are required for Bobine. They are stored locally in encrypted form.")</p>
+        <p class="welcome-footnote">@T("Les deux clés sont nécessaires à Bobine. Elles sont enregistrées localement et chiffrées.", "Both keys are required for Bobine. They are stored locally in encrypted form.")</p>
     </div>
 </section>
 
@@ -47,10 +74,15 @@
     private string TmdbToken = "";
     private string OpenSubtitlesKey = "";
     private string? Message;
+    private string? PickerMessage;
     private bool Busy;
     private bool IsError;
     private bool TmdbConfigured;
     private bool OpenSubtitlesConfigured;
+    private bool PickerOpen;
+    private string? PickerCurrentPath;
+    private string? PickerParentPath;
+    private List<FolderItem> PickerFolders = [];
 
     protected override async Task OnInitializedAsync()
     {
@@ -62,7 +94,7 @@
             TmdbConfigured = credentials?.TmdbConfigured == true;
             OpenSubtitlesConfigured = credentials?.OpenSubtitlesConfigured == true;
             if (string.IsNullOrWhiteSpace(MediaRoot))
-                throw new InvalidOperationException(T("Le dossier média n’a pas été sélectionné.", "No media folder was selected."));
+                throw new InvalidOperationException(T("Impossible de lire le dossier média.", "Couldn't read the media folder."));
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
         {
@@ -71,13 +103,56 @@
         }
     }
 
+    private async Task OpenFolderPickerAsync()
+    {
+        PickerOpen = true;
+        PickerCurrentPath = null;
+        await BrowseFolderAsync(null);
+    }
+
+    private async Task BrowseFolderAsync(string? path)
+    {
+        PickerMessage = null;
+        try
+        {
+            var url = "/api/setup/folders" + (string.IsNullOrWhiteSpace(path) ? "" : $"?path={Uri.EscapeDataString(path)}");
+            var response = await Http.GetAsync(url);
+            if (!response.IsSuccessStatusCode)
+            {
+                var error = await response.Content.ReadFromJsonAsync<ErrorResponse>();
+                PickerMessage = error?.Error ?? T("Impossible de lire ce dossier.", "Couldn't read this folder.");
+                return;
+            }
+            var result = await response.Content.ReadFromJsonAsync<FolderResponse>();
+            if (result is null)
+            {
+                PickerMessage = T("Réponse invalide du serveur.", "The server returned an invalid response.");
+                return;
+            }
+            PickerCurrentPath = result.CurrentPath;
+            PickerParentPath = result.ParentPath;
+            PickerFolders = result.Folders;
+        }
+        catch (HttpRequestException) { PickerMessage = T("Impossible de joindre le serveur.", "Couldn't reach the server."); }
+    }
+
+    private void UseSelectedFolder()
+    {
+        if (PickerCurrentPath is null) return;
+        MediaRoot = PickerCurrentPath;
+        PickerOpen = false;
+    }
+
+    private void CloseFolderPicker() => PickerOpen = false;
+
     private async Task FinishAsync()
     {
         if (Busy) return;
-        if ((!TmdbConfigured && string.IsNullOrWhiteSpace(TmdbToken))
+        if (string.IsNullOrWhiteSpace(MediaRoot)
+            || (!TmdbConfigured && string.IsNullOrWhiteSpace(TmdbToken))
             || (!OpenSubtitlesConfigured && string.IsNullOrWhiteSpace(OpenSubtitlesKey)))
         {
-            Message = T("Saisissez les deux clés API pour continuer.", "Enter both API keys to continue.");
+            Message = T("Choisissez un dossier et saisissez les deux clés API pour continuer.", "Choose a folder and enter both API keys to continue.");
             IsError = true;
             return;
         }
@@ -98,28 +173,35 @@
                     throw new InvalidOperationException(T("Impossible d’enregistrer les clés API.", "Couldn't save the API keys."));
             }
 
-            var status = await Http.GetFromJsonAsync<MediaResponse>("/api/configuration/media");
-            if (status is null) throw new HttpRequestException();
+            var settings = await Http.GetFromJsonAsync<MediaResponse>("/api/configuration/media");
+            if (settings is null) throw new HttpRequestException();
             var mediaResponse = await Http.PutAsJsonAsync("/api/configuration/media", new
             {
                 cacheRoot = MediaRoot,
-                cacheMaxBytes = status.CacheMaxBytes,
-                shareRatioLimit = status.ShareRatioLimit,
-                preferredResolution = status.PreferredResolution,
-                enableUpnp = status.EnableUpnp,
-                subtitleLanguage = status.SubtitleLanguage,
-                allowAnonymousTorrentActions = status.AllowAnonymousTorrentActions
+                cacheMaxBytes = settings.CacheMaxBytes,
+                shareRatioLimit = settings.ShareRatioLimit,
+                preferredResolution = settings.PreferredResolution,
+                enableUpnp = settings.EnableUpnp,
+                subtitleLanguage = settings.SubtitleLanguage,
+                allowAnonymousTorrentActions = settings.AllowAnonymousTorrentActions
             });
             if (!mediaResponse.IsSuccessStatusCode)
             {
                 var error = await mediaResponse.Content.ReadFromJsonAsync<ErrorResponse>();
                 throw new InvalidOperationException(error?.Error ?? T("Impossible d’enregistrer le dossier média.", "Couldn't save the media folder."));
             }
+            var savedSettings = await mediaResponse.Content.ReadFromJsonAsync<MediaResponse>();
 
             var completion = await Http.PostAsync("/api/setup/complete", content: null);
             if (!completion.IsSuccessStatusCode)
                 throw new InvalidOperationException(T("Les deux clés sont obligatoires pour terminer la configuration.", "Both API keys are required to finish setup."));
-            Navigation.NavigateTo("/", forceLoad: true, replace: true);
+            if (savedSettings?.RequiresRestart == true)
+            {
+                Message = T("Configuration enregistrée. Redémarrage du serveur…", "Settings saved. Restarting the server…");
+                await JS.InvokeVoidAsync("mediaSetup.waitForRestart");
+                await Http.PostAsync("/api/server/restart", content: null);
+            }
+            else Navigation.NavigateTo("/", forceLoad: true, replace: true);
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
         {
@@ -130,8 +212,10 @@
     }
 
     private sealed record MediaResponse(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit,
-        int PreferredResolution, bool EnableUpnp, bool AllowAnonymousTorrentActions, string SubtitleLanguage);
+        int PreferredResolution, bool EnableUpnp, bool AllowAnonymousTorrentActions, string SubtitleLanguage, bool RequiresRestart = false);
     private sealed record CredentialResponse(bool TmdbConfigured, bool OpenSubtitlesConfigured);
+    private sealed record FolderResponse(string? CurrentPath, string? ParentPath, List<FolderItem> Folders);
+    private sealed record FolderItem(string Name, string Path);
     private sealed record ErrorResponse(string? Error);
     private static string T(string french, string english) => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "fr" ? french : english;
 }

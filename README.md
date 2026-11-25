@@ -61,7 +61,7 @@ Set `TMDB__ReadAccessToken` or `OpenSubtitles__ApiKey` in the environment before
 
 The GitHub Actions workflow builds self-contained `.app` packages for Apple Silicon and Intel Macs. It can be run manually from the Actions tab or creates a GitHub release when a `v*` tag is pushed. A Mac and a .NET installation are not required to build the packages locally because the workflow uses macOS runners.
 
-On the first launch, Bobine asks the user to choose a media folder, starts the server, and opens the setup page in the browser. The page confirms the selected folder and requires TMDB and OpenSubtitles API keys. Application data and encrypted credentials are stored in `~/Library/Application Support/Bobine`; media stays in the chosen folder. The server listens on port 6050 on the local network so a TV can connect to the Mac's local IP address.
+On the first launch, Bobine starts the server and opens the setup page in the browser. The page provides a server-side folder picker and requires TMDB and OpenSubtitles API keys. Application data and encrypted credentials are stored in `~/Library/Application Support/Bobine`; media stays in the chosen folder. The server listens on port 6050 on the local network so a TV can connect to the Mac's local IP address.
 
 To install, download the ZIP matching the Mac, open it, and move `Bobine.app` to Applications. If macOS blocks the first launch, Control-click the app, choose **Open**, then confirm **Open** in the dialog.
 
@@ -69,7 +69,7 @@ The current packages are not signed or notarized by Apple. macOS may ask the use
 
 ## Windows standalone app
 
-The self-contained Windows x64 package includes a launcher and server runtime, so .NET does not need to be installed. The launcher opens a folder picker on first start, starts the server, and opens the setup page, which confirms that folder and requires TMDB and OpenSubtitles API keys. Application settings and credentials are kept under `%LOCALAPPDATA%\Bobine`; media remains in the selected folder. The server listens on port 6050 so a TV on the local network can connect to the PC's local IP address.
+The self-contained Windows x64 package includes a launcher and server runtime, so .NET does not need to be installed. The launcher starts the server and opens the setup page, which provides a server-side folder picker and requires TMDB and OpenSubtitles API keys. Application settings and credentials are kept under `%LOCALAPPDATA%\Bobine`; media remains in the selected folder. The server listens on port 6050 so a TV on the local network can connect to the PC's local IP address.
 
 The ZIP is built locally on Windows with `packaging/windows/build.ps1`. GitHub Actions also builds it on every update to `main` and attaches it to tagged releases. Windows may show a SmartScreen warning because the package is not code-signed.
 

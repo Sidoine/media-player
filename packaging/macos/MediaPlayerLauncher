@@ -26,21 +26,6 @@ if [ ! -x "$SERVER_DIR/MediaPlayer.Web" ]; then
   mv "$STAGING" "$SERVER_DIR"
 fi
 
-MEDIA_ROOT="$HOME/Movies/MediaPlayer"
-if [ ! -f "$DATA_DIR/desktop-setup-complete" ]; then
-  MEDIA_ROOT="$(osascript <<'APPLESCRIPT'
-try
-  set chosenFolder to choose folder with prompt "Choisissez le dossier où Bobine conservera vos médias" default location (path to movies folder)
-  return POSIX path of chosenFolder
-on error number -128
-  return ""
-end try
-APPLESCRIPT
-)"
-  if [ -z "$MEDIA_ROOT" ]; then exit 0; fi
-fi
-
-export Media__Root="$MEDIA_ROOT"
 export MediaPlayer__DesktopSetup=true
 export ASPNETCORE_URLS="http://0.0.0.0:6050"
 cd "$SERVER_DIR"

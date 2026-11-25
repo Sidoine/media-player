@@ -83,26 +83,7 @@ internal static class Program
                 InstallOrUpdateServer(packageRoot, serverRoot, dataRoot, version);
 
                 var setupMarker = Path.Combine(dataRoot, "desktop-setup-complete");
-                var mediaRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Bobine");
-                if (!File.Exists(setupMarker))
-                {
-                    status.Text = "Choisissez le dossier où Bobine conservera vos médias et téléchargements.";
-                    using var dialog = new FolderBrowserDialog
-                    {
-                        Description = "Choisissez le dossier où Bobine conservera les médias et téléchargements.",
-                        UseDescriptionForTitle = true,
-                        SelectedPath = Directory.Exists(mediaRoot) ? mediaRoot : Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
-                        ShowNewFolderButton = true
-                    };
-                    if (dialog.ShowDialog(this) != DialogResult.OK)
-                    {
-                        ShowError("Configuration annulée. Vous pourrez relancer Bobine pour recommencer.");
-                        return;
-                    }
-                    mediaRoot = dialog.SelectedPath;
-                }
-
-                Directory.CreateDirectory(mediaRoot);
+                status.Text = "Le serveur démarre. Vous choisirez le dossier média dans la page de configuration.";
                 var serverExecutable = Path.Combine(serverRoot, "MediaPlayer.Web.exe");
                 var startInfo = new ProcessStartInfo(serverExecutable)
                 {
@@ -113,7 +94,6 @@ internal static class Program
                 startInfo.ArgumentList.Add("--urls");
                 startInfo.ArgumentList.Add(ListenUrl);
                 startInfo.Environment["ASPNETCORE_URLS"] = ListenUrl;
-                startInfo.Environment["Media__Root"] = mediaRoot;
                 startInfo.Environment["MediaPlayer__DesktopSetup"] = "true";
                 startInfo.Environment["MediaPlayer__InternalApiBaseAddress"] = BaseUrl;
                 using var serverProcess = Process.Start(startInfo)
