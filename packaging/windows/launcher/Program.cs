@@ -11,76 +11,142 @@ internal static class Program
     private const string ListenUrl = "http://0.0.0.0:6050";
 
     [STAThread]
-    private static async Task Main()
+    private static void Main()
     {
         ApplicationConfiguration.Initialize();
-        try { await StartAsync(); }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Bobine n’a pas pu démarrer.\n\n{ex.Message}", "Bobine", MessageBoxButtons.OK, MessageBoxIcon.Error);
-        }
+        Application.Run(new StartupForm());
     }
 
-    private static async Task StartAsync()
+    private sealed class StartupForm : Form
     {
-        var packageRoot = AppContext.BaseDirectory;
-        var version = File.ReadAllText(Path.Combine(packageRoot, "build-version.txt")).Trim();
-        var supportRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Bobine");
-        var serverRoot = Path.Combine(supportRoot, "Server");
-        var dataRoot = Path.Combine(serverRoot, "App_Data");
-        Directory.CreateDirectory(supportRoot);
-
-        if (await IsBobineRespondingAsync())
+        private readonly Label status = new()
         {
-            OpenBrowser(BaseUrl + "/");
-            return;
-        }
-
-        InstallOrUpdateServer(packageRoot, serverRoot, dataRoot, version);
-
-        var setupMarker = Path.Combine(dataRoot, "desktop-setup-complete");
-        var mediaRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Bobine");
-        if (!File.Exists(setupMarker))
-        {
-            using var dialog = new FolderBrowserDialog
-            {
-                Description = "Choisissez le dossier où Bobine conservera les médias et téléchargements.",
-                UseDescriptionForTitle = true,
-                SelectedPath = Directory.Exists(mediaRoot) ? mediaRoot : Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
-                ShowNewFolderButton = true
-            };
-            if (dialog.ShowDialog() != DialogResult.OK) return;
-            mediaRoot = dialog.SelectedPath;
-        }
-
-        Directory.CreateDirectory(mediaRoot);
-        var serverExecutable = Path.Combine(serverRoot, "MediaPlayer.Web.exe");
-        var startInfo = new ProcessStartInfo(serverExecutable)
-        {
-            WorkingDirectory = serverRoot,
-            UseShellExecute = false,
-            CreateNoWindow = true
+            AutoSize = false,
+            Location = new Point(22, 20),
+            Size = new Size(400, 82),
+            Text = "Bobine démarre…"
         };
-        startInfo.ArgumentList.Add("--urls");
-        startInfo.ArgumentList.Add(ListenUrl);
-        startInfo.Environment["ASPNETCORE_URLS"] = ListenUrl;
-        startInfo.Environment["Media__Root"] = mediaRoot;
-        startInfo.Environment["MediaPlayer__DesktopSetup"] = "true";
-        startInfo.Environment["MediaPlayer__InternalApiBaseAddress"] = BaseUrl;
-        _ = Process.Start(startInfo) ?? throw new InvalidOperationException("Windows n’a pas pu lancer le serveur.");
-
-        for (var attempt = 0; attempt < 60; attempt++)
+        private readonly Button retry = new()
         {
-            if (await IsBobineRespondingAsync())
-            {
-                OpenBrowser(File.Exists(setupMarker) ? BaseUrl + "/" : BaseUrl + "/bienvenue");
-                return;
-            }
-            await Task.Delay(500);
+            Location = new Point(22, 119),
+            Size = new Size(170, 34),
+            Text = "Réessayer",
+            Visible = false
+        };
+        private readonly Button close = new()
+        {
+            Location = new Point(252, 119),
+            Size = new Size(170, 34),
+            Text = "Fermer"
+        };
+        private bool starting;
+
+        public StartupForm()
+        {
+            Text = "Bobine";
+            ClientSize = new Size(444, 174);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterScreen;
+            Controls.Add(status);
+            Controls.Add(retry);
+            Controls.Add(close);
+            retry.Click += async (_, _) => await StartAsync();
+            close.Click += (_, _) => Close();
+            Shown += async (_, _) => await StartAsync();
         }
 
-        var logPath = Path.Combine(supportRoot, "server.log");
-        throw new InvalidOperationException($"Le serveur n’a pas répondu. Son journal se trouve ici : {logPath}");
+        private async Task StartAsync()
+        {
+            if (starting) return;
+            starting = true;
+            retry.Visible = false;
+            status.Text = "Bobine démarre…";
+            try
+            {
+                var packageRoot = AppContext.BaseDirectory;
+                var version = File.ReadAllText(Path.Combine(packageRoot, "build-version.txt")).Trim();
+                var supportRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Bobine");
+                var serverRoot = Path.Combine(supportRoot, "Server");
+                var dataRoot = Path.Combine(serverRoot, "App_Data");
+                Directory.CreateDirectory(supportRoot);
+
+                if (await IsBobineRespondingAsync())
+                {
+                    OpenBrowser(BaseUrl + "/");
+                    Close();
+                    return;
+                }
+
+                status.Text = "Préparation du serveur…";
+                InstallOrUpdateServer(packageRoot, serverRoot, dataRoot, version);
+
+                var setupMarker = Path.Combine(dataRoot, "desktop-setup-complete");
+                var mediaRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "Bobine");
+                if (!File.Exists(setupMarker))
+                {
+                    status.Text = "Choisissez le dossier où Bobine conservera vos médias et téléchargements.";
+                    using var dialog = new FolderBrowserDialog
+                    {
+                        Description = "Choisissez le dossier où Bobine conservera les médias et téléchargements.",
+                        UseDescriptionForTitle = true,
+                        SelectedPath = Directory.Exists(mediaRoot) ? mediaRoot : Environment.GetFolderPath(Environment.SpecialFolder.MyVideos),
+                        ShowNewFolderButton = true
+                    };
+                    if (dialog.ShowDialog(this) != DialogResult.OK)
+                    {
+                        ShowError("Configuration annulée. Vous pourrez relancer Bobine pour recommencer.");
+                        return;
+                    }
+                    mediaRoot = dialog.SelectedPath;
+                }
+
+                Directory.CreateDirectory(mediaRoot);
+                var serverExecutable = Path.Combine(serverRoot, "MediaPlayer.Web.exe");
+                var startInfo = new ProcessStartInfo(serverExecutable)
+                {
+                    WorkingDirectory = serverRoot,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                startInfo.ArgumentList.Add("--urls");
+                startInfo.ArgumentList.Add(ListenUrl);
+                startInfo.Environment["ASPNETCORE_URLS"] = ListenUrl;
+                startInfo.Environment["Media__Root"] = mediaRoot;
+                startInfo.Environment["MediaPlayer__DesktopSetup"] = "true";
+                startInfo.Environment["MediaPlayer__InternalApiBaseAddress"] = BaseUrl;
+                using var serverProcess = Process.Start(startInfo)
+                    ?? throw new InvalidOperationException("Windows n’a pas pu lancer le serveur.");
+
+                for (var attempt = 0; attempt < 60; attempt++)
+                {
+                    if (await IsBobineRespondingAsync())
+                    {
+                        OpenBrowser(File.Exists(setupMarker) ? BaseUrl + "/" : BaseUrl + "/bienvenue");
+                        Close();
+                        return;
+                    }
+                    if (serverProcess.HasExited)
+                        throw new InvalidOperationException($"Le serveur s’est arrêté au démarrage (code {serverProcess.ExitCode}).");
+                    status.Text = $"Démarrage du serveur… ({attempt + 1}/60)";
+                    await Task.Delay(500);
+                }
+
+                throw new InvalidOperationException("Le serveur n’a pas répondu après 30 secondes.");
+            }
+            catch (Exception ex)
+            {
+                ShowError($"Bobine n’a pas pu démarrer.\n{ex.Message}");
+            }
+            finally { starting = false; }
+        }
+
+        private void ShowError(string message)
+        {
+            status.Text = message;
+            retry.Visible = true;
+        }
     }
 
     private static void InstallOrUpdateServer(string packageRoot, string serverRoot, string dataRoot, string version)
@@ -97,8 +163,7 @@ internal static class Program
         Directory.CreateDirectory(Path.Combine(stage, "App_Data"));
 
         var oldData = Path.Combine(serverRoot, "App_Data");
-        if (Directory.Exists(oldData))
-            CopyDirectory(oldData, Path.Combine(stage, "App_Data"));
+        if (Directory.Exists(oldData)) CopyDirectory(oldData, Path.Combine(stage, "App_Data"));
         else Directory.CreateDirectory(dataRoot);
         File.WriteAllText(Path.Combine(stage, "desktop-package-version.txt"), version);
 
