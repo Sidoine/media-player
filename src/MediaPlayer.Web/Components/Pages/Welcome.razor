@@ -62,7 +62,7 @@
             <label>OpenSubtitles API key <span>@(OpenSubtitlesConfigured ? T("(déjà configurée)", "(already configured)") : T("(obligatoire)", "(required)"))</span>
                 <input @bind="OpenSubtitlesKey" type="password" autocomplete="new-password" placeholder="@(OpenSubtitlesConfigured ? T("Clé déjà enregistrée", "Key already saved") : "API key")" required="@(!OpenSubtitlesConfigured)" />
             </label>
-            <button class="welcome-primary" type="submit" disabled="@(Busy || string.IsNullOrWhiteSpace(MediaRoot))">@(Busy ? T("Enregistrement…", "Saving…") : T("Enregistrer et ouvrir Bobine", "Save and open Bobine"))</button>
+            <button class="welcome-primary" type="submit" disabled="@(Busy || string.IsNullOrWhiteSpace(MediaRoot) || (!TmdbConfigured && string.IsNullOrWhiteSpace(TmdbToken)) || (!OpenSubtitlesConfigured && string.IsNullOrWhiteSpace(OpenSubtitlesKey)))">@(Busy ? T("Enregistrement…", "Saving…") : T("Enregistrer et ouvrir Bobine", "Save and open Bobine"))</button>
         </form>
 
         <p class="welcome-footnote">@T("Les deux clés sont nécessaires à Bobine. Elles sont enregistrées localement et chiffrées.", "Both keys are required for Bobine. They are stored locally in encrypted form.")</p>
