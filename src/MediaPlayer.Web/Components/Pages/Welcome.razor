@@ -1,7 +1,6 @@
 @page "/bienvenue"
 @inject HttpClient Http
 @inject NavigationManager Navigation
-@inject IJSRuntime JS
 
 <PageTitle>@T("Première configuration", "First setup") · Bobine</PageTitle>
 
@@ -10,31 +9,36 @@
         <div class="welcome-mark">BOBINE</div>
         <p class="welcome-kicker">@T("VOTRE SERVEUR EST PRÊT", "YOUR SERVER IS READY")</p>
         <h1>@T("Bienvenue chez vous.", "Welcome home.")</h1>
-        <p class="welcome-intro">@T("Choisissez où stocker vos médias. Vous pourrez ensuite ajouter vos clés API maintenant ou plus tard dans les réglages.", "Choose where to store your media. You can add your API keys now or later in Settings.")</p>
+        <p class="welcome-intro">@T("Le dossier a été choisi dans la fenêtre précédente. Il n’y a rien à saisir ici.", "The folder was selected in the previous dialog. There is nothing to type here.")</p>
 
         @if (!string.IsNullOrWhiteSpace(Message))
         {
             <p class="welcome-message @(IsError ? "error" : null)" role="status">@Message</p>
         }
 
-        <div class="welcome-fields">
-            <label>@T("Dossier des médias", "Media folder")
-                <input @bind="MediaRoot" required autocomplete="off" placeholder="/Users/you/Movies/MediaPlayer" />
-                <small>@T("Le dossier est créé s’il n’existe pas. Les téléchargements y seront enregistrés.", "The folder will be created if needed. Downloads will be saved there.")</small>
-            </label>
-            <label>TMDB @T("Clé", "key") <span>(@T("facultatif", "optional"))</span>
-                <input @bind="TmdbToken" type="password" autocomplete="new-password" placeholder="Read Access Token" />
-            </label>
-            <label>OpenSubtitles API <span>(@T("facultative", "optional"))</span>
-                <input @bind="OpenSubtitlesKey" type="password" autocomplete="new-password" placeholder="API key" />
-            </label>
+        <div class="welcome-folder">
+            <span>@T("Dossier des médias sélectionné", "Selected media folder")</span>
+            @if (string.IsNullOrWhiteSpace(MediaRoot))
+            {
+                <strong>@T("Lecture des réglages…", "Loading settings…")</strong>
+            }
+            else
+            {
+                <code title="@MediaRoot">@MediaRoot</code>
+            }
         </div>
 
-        <div class="welcome-actions">
-            <button class="welcome-primary" @onclick="SaveAndFinishAsync" disabled="@Busy">@(Busy ? T("Enregistrement…", "Saving…") : T("Enregistrer et ouvrir Bobine", "Save and open Bobine"))</button>
-            <button class="welcome-skip" @onclick="SkipAsync" disabled="@Busy">@T("Continuer sans clés API", "Continue without API keys")</button>
-        </div>
-        <p class="welcome-footnote">@T("Les clés sont enregistrées localement et chiffrées. Vous pourrez les ajouter ou les remplacer dans Configuration.", "Keys are stored locally in encrypted form. You can add or replace them later in Settings.")</p>
+        <form class="welcome-fields" @onsubmit="FinishAsync" @onsubmit:preventDefault>
+            <label>TMDB Read Access Token <span>@(TmdbConfigured ? T("(déjà configurée)", "(already configured)") : T("(obligatoire)", "(required)"))</span>
+                <input @bind="TmdbToken" type="password" autocomplete="new-password" placeholder="@(TmdbConfigured ? T("Clé déjà enregistrée", "Key already saved") : "Read Access Token")" required="@(!TmdbConfigured)" />
+            </label>
+            <label>OpenSubtitles API key <span>@(OpenSubtitlesConfigured ? T("(déjà configurée)", "(already configured)") : T("(obligatoire)", "(required)"))</span>
+                <input @bind="OpenSubtitlesKey" type="password" autocomplete="new-password" placeholder="@(OpenSubtitlesConfigured ? T("Clé déjà enregistrée", "Key already saved") : "API key")" required="@(!OpenSubtitlesConfigured)" />
+            </label>
+            <button class="welcome-primary" type="submit" disabled="@(Busy || string.IsNullOrWhiteSpace(MediaRoot))">@(Busy ? T("Enregistrement…", "Saving…") : T("Enregistrer et ouvrir Bobine", "Save and open Bobine"))</button>
+        </form>
+
+        <p class="welcome-footnote">@T("Les deux clés sont nécessaires au fonctionnement de Bobine. Elles sont enregistrées localement et chiffrées.", "Both keys are required for Bobine. They are stored locally in encrypted form.")</p>
     </div>
 </section>
 
@@ -45,77 +49,89 @@
     private string? Message;
     private bool Busy;
     private bool IsError;
+    private bool TmdbConfigured;
+    private bool OpenSubtitlesConfigured;
 
     protected override async Task OnInitializedAsync()
     {
         try
         {
             var settings = await Http.GetFromJsonAsync<MediaResponse>("/api/configuration/media");
+            var credentials = await Http.GetFromJsonAsync<CredentialResponse>("/api/configuration/credentials");
             MediaRoot = settings?.CacheRoot ?? "";
+            TmdbConfigured = credentials?.TmdbConfigured == true;
+            OpenSubtitlesConfigured = credentials?.OpenSubtitlesConfigured == true;
+            if (string.IsNullOrWhiteSpace(MediaRoot))
+                throw new InvalidOperationException(T("Le dossier média n’a pas été sélectionné.", "No media folder was selected."));
         }
-        catch (HttpRequestException) { Message = T("Impossible de lire les réglages du serveur. Réessayez dans quelques instants.", "Couldn't read the server settings. Please try again in a moment."); IsError = true; }
+        catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
+        {
+            Message = ex is InvalidOperationException ? ex.Message : T("Impossible de lire les réglages du serveur. Réessayez.", "Couldn't read the server settings. Please try again.");
+            IsError = true;
+        }
     }
 
-    private Task SkipAsync() => FinishAsync(saveCredentials: false);
-    private Task SaveAndFinishAsync() => FinishAsync();
-
-    private async Task FinishAsync(bool saveCredentials = true)
+    private async Task FinishAsync()
     {
         if (Busy) return;
+        if ((!TmdbConfigured && string.IsNullOrWhiteSpace(TmdbToken))
+            || (!OpenSubtitlesConfigured && string.IsNullOrWhiteSpace(OpenSubtitlesKey)))
+        {
+            Message = T("Saisissez les deux clés API pour continuer.", "Enter both API keys to continue.");
+            IsError = true;
+            return;
+        }
+
         Busy = true;
         Message = null;
         IsError = false;
         try
         {
-            var settings = await Http.GetFromJsonAsync<MediaResponse>("/api/configuration/media");
-            if (settings is null) throw new HttpRequestException();
-            var mediaResponse = await Http.PutAsJsonAsync("/api/configuration/media", new
-            {
-                cacheRoot = MediaRoot,
-                cacheMaxBytes = settings.CacheMaxBytes,
-                shareRatioLimit = settings.ShareRatioLimit,
-                preferredResolution = settings.PreferredResolution,
-                enableUpnp = settings.EnableUpnp,
-                subtitleLanguage = settings.SubtitleLanguage,
-                allowAnonymousTorrentActions = settings.AllowAnonymousTorrentActions
-            });
-            if (!mediaResponse.IsSuccessStatusCode)
-            {
-                var error = await mediaResponse.Content.ReadFromJsonAsync<ErrorResponse>();
-                throw new InvalidOperationException(error?.Error ?? T("Impossible d’enregistrer le dossier média.", "Couldn't save the media folder."));
-            }
-            var savedSettings = await mediaResponse.Content.ReadFromJsonAsync<MediaResponse>();
-
-            if (saveCredentials && (!string.IsNullOrWhiteSpace(TmdbToken) || !string.IsNullOrWhiteSpace(OpenSubtitlesKey)))
+            if (!string.IsNullOrWhiteSpace(TmdbToken) || !string.IsNullOrWhiteSpace(OpenSubtitlesKey))
             {
                 var credentialResponse = await Http.PutAsJsonAsync("/api/configuration/credentials", new
                 {
                     tmdbReadAccessToken = TmdbToken,
                     openSubtitlesApiKey = OpenSubtitlesKey
                 });
-                if (!credentialResponse.IsSuccessStatusCode) throw new InvalidOperationException(T("Impossible d’enregistrer les clés API.", "Couldn't save the API keys."));
+                if (!credentialResponse.IsSuccessStatusCode)
+                    throw new InvalidOperationException(T("Impossible d’enregistrer les clés API.", "Couldn't save the API keys."));
+            }
+
+            var status = await Http.GetFromJsonAsync<MediaResponse>("/api/configuration/media");
+            if (status is null) throw new HttpRequestException();
+            var mediaResponse = await Http.PutAsJsonAsync("/api/configuration/media", new
+            {
+                cacheRoot = MediaRoot,
+                cacheMaxBytes = status.CacheMaxBytes,
+                shareRatioLimit = status.ShareRatioLimit,
+                preferredResolution = status.PreferredResolution,
+                enableUpnp = status.EnableUpnp,
+                subtitleLanguage = status.SubtitleLanguage,
+                allowAnonymousTorrentActions = status.AllowAnonymousTorrentActions
+            });
+            if (!mediaResponse.IsSuccessStatusCode)
+            {
+                var error = await mediaResponse.Content.ReadFromJsonAsync<ErrorResponse>();
+                throw new InvalidOperationException(error?.Error ?? T("Impossible d’enregistrer le dossier média.", "Couldn't save the media folder."));
             }
 
             var completion = await Http.PostAsync("/api/setup/complete", content: null);
-            if (!completion.IsSuccessStatusCode) throw new InvalidOperationException(T("Impossible de terminer la configuration initiale.", "Couldn't finish the initial setup."));
-            if (savedSettings?.RequiresRestart == true)
-            {
-                Message = T("Configuration enregistrée. Redémarrage du serveur…", "Settings saved. Restarting the server…");
-                await JS.InvokeVoidAsync("mediaSetup.waitForRestart");
-                await Http.PostAsync("/api/server/restart", content: null);
-            }
-            else Navigation.NavigateTo("/", forceLoad: true, replace: true);
+            if (!completion.IsSuccessStatusCode)
+                throw new InvalidOperationException(T("Les deux clés sont obligatoires pour terminer la configuration.", "Both API keys are required to finish setup."));
+            Navigation.NavigateTo("/", forceLoad: true, replace: true);
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or TaskCanceledException)
         {
-            Message = ex is InvalidOperationException ? ex.Message : T("Le serveur ne répond pas. Vérifiez qu’il est démarré, puis réessayez.", "The server isn't responding. Check that it is running, then try again.");
+            Message = ex is InvalidOperationException ? ex.Message : T("Le serveur ne répond pas. Réessayez dans quelques instants.", "The server isn't responding. Please try again in a moment.");
             IsError = true;
         }
         finally { Busy = false; }
     }
 
     private sealed record MediaResponse(string CacheRoot, long CacheMaxBytes, double? ShareRatioLimit,
-        int PreferredResolution, bool EnableUpnp, bool AllowAnonymousTorrentActions, string SubtitleLanguage, bool RequiresRestart = false);
+        int PreferredResolution, bool EnableUpnp, bool AllowAnonymousTorrentActions, string SubtitleLanguage);
+    private sealed record CredentialResponse(bool TmdbConfigured, bool OpenSubtitlesConfigured);
     private sealed record ErrorResponse(string? Error);
     private static string T(string french, string english) => CultureInfo.CurrentUICulture.TwoLetterISOLanguageName == "fr" ? french : english;
 }

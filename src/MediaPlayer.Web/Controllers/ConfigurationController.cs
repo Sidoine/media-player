@@ -130,7 +130,10 @@ public sealed class ConfigurationController(
 }
 
 [ApiController]
-public sealed class DesktopSetupController(IConfiguration configuration, IWebHostEnvironment environment) : ControllerBase
+public sealed class DesktopSetupController(
+    IConfiguration configuration,
+    IWebHostEnvironment environment,
+    ApiCredentialStore credentials) : ControllerBase
 {
     [HttpPost("/api/setup/complete")]
     public IActionResult Complete()
@@ -138,6 +141,8 @@ public sealed class DesktopSetupController(IConfiguration configuration, IWebHos
         if (!configuration.GetValue<bool>("MediaPlayer:DesktopSetup")) return NotFound();
         if (HttpContext.Connection.RemoteIpAddress is not { } remoteIp || !System.Net.IPAddress.IsLoopback(remoteIp))
             return Forbid();
+        if (!credentials.IsFullyConfigured)
+            return BadRequest(new { error = "Les clés TMDB et OpenSubtitles sont nécessaires pour terminer la configuration." });
         var marker = Path.Combine(environment.ContentRootPath, "App_Data", "desktop-setup-complete");
         Directory.CreateDirectory(Path.GetDirectoryName(marker)!);
         System.IO.File.WriteAllText(marker, DateTimeOffset.UtcNow.ToString("O"));
